@@ -2,6 +2,12 @@ from forecast.grid import generate_turkey_grid
 from forecast.predictor import predict
 
 
+def _optional_float(value):
+    if value is None:
+        return None
+    return float(value)
+
+
 def forecast_grid(events, step=0.5):
     grid = generate_turkey_grid(step=step)
     results = []
@@ -22,6 +28,10 @@ def forecast_grid(events, step=0.5):
             "gnn_probability": float(pred.get("gnn_probability", 0.0)),
             "m5_72h_probability": float(pred.get("m5_72h_probability", 0.0)),
             "max_mag_7d_prediction": float(pred.get("max_mag_7d_prediction", 0.0)),
+            "time_to_next_event_hours_prediction": _optional_float(pred.get("time_to_next_event_hours_prediction")),
+            "next_event_distance_km_prediction": _optional_float(pred.get("next_event_distance_km_prediction")),
+            "next_event_magnitude_prediction": _optional_float(pred.get("next_event_magnitude_prediction")),
+            "next_event_time_window": pred.get("next_event_time_window"),
             "locality_score": float(pred.get("locality_score", 0.0)),
             "risk_score": float(prob * 10.0),
             "top_features": pred.get("top_features", []),

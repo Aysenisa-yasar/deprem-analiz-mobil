@@ -15,3 +15,7 @@ def test_predict_returns_dict():
     assert 0.0 <= p["probability"] <= 1.0
     assert "model_type" in p
     assert "features" in p
+    assert "time_to_next_event_hours_prediction" in p
+    assert "next_event_distance_km_prediction" in p
+    assert "next_event_magnitude_prediction" in p
+    assert "next_event_time_window" in p

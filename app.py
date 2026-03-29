@@ -12,7 +12,7 @@ import pickle
 from datetime import datetime, timedelta
 from collections import deque
 
-from flask import Flask, jsonify, request, make_response, render_template
+from flask import Flask, jsonify, request, make_response
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, IsolationForest
 from sklearn.preprocessing import StandardScaler
@@ -44,7 +44,12 @@ try:
     app.register_blueprint(forecast_bp)
     app.register_blueprint(metrics_bp)
 except ImportError as e:
-    logger.warning("[APP] Yeni mimari blueprint'ler yüklenemedi (routes/forecast/): %s", e)
+    logger.warning("[APP] Forecast/metrics blueprint yüklenemedi: %s", e)
+try:
+    from routes.mobile_routes import mobile_bp
+    app.register_blueprint(mobile_bp)
+except ImportError as e:
+    logger.warning("[APP] Mobil blueprint yüklenemedi: %s", e)
 
 # =========================================================
 # LEGACY ROUTES BELOW
@@ -93,8 +98,14 @@ def log_exception(error):
 # --- FRONTEND (CORS'suz mimari: aynı domain) ---
 @app.route('/')
 def home():
-    """ Ana sayfa - Frontend dashboard (depremanaliz.onrender.com) """
-    return render_template('index.html')
+    """ API kökü — web arayüzü kaldırıldı; mobil uygulama ve /api/* kullanılır. """
+    return jsonify({
+        "service": "DepremAnaliz API",
+        "health": "/api/health",
+        "forecast_v2": "/api/v2/forecast-map",
+        "recent_quakes": "/api/v2/recent-earthquakes",
+        "mobile": "/api/mobile/register",
+    })
 
 # Kandilli verilerini çeken üçüncü taraf API (Live + Archive)
 KANDILLI_API = 'https://api.orhanaydogdu.com.tr/deprem/kandilli/live'

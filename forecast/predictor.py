@@ -58,6 +58,34 @@ def _clamp01(value: float) -> float:
     return float(min(max(value, 0.0), 1.0))
 
 
+def _optional_float(value, min_value=None, max_value=None):
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if min_value is not None:
+        numeric = max(float(min_value), numeric)
+    if max_value is not None:
+        numeric = min(float(max_value), numeric)
+    return float(numeric)
+
+
+def _lead_time_window(hours):
+    lead_hours = _optional_float(hours, min_value=0.0)
+    if lead_hours is None:
+        return None
+    if lead_hours <= 24.0:
+        return "0-24h"
+    if lead_hours <= 72.0:
+        return "24-72h"
+    if lead_hours <= 168.0:
+        return "72-168h"
+    return "168h+"
+
+
 def _local_signal_events(
     events: list,
     lat: float,
@@ -170,26 +198,67 @@ def _locality_score(features: dict, signals: dict) -> float:
     )
 
 
-def _predict_auxiliary_targets(model_data: dict, X: np.ndarray) -> tuple[float, float]:
+def _predict_auxiliary_targets(model_data: dict, X: np.ndarray) -> dict:
     aux_models = model_data.get("aux_models", {}) if isinstance(model_data, dict) else {}
+    horizons = {}
+    if isinstance(model_data, dict):
+        horizons = (model_data.get("targets", {}) or {}).get("horizons_hours", {}) or {}
+    next_event_horizon = _optional_float(horizons.get("time_to_next_event_hours"), min_value=1.0) or 168.0
 
-    m5_prob = 0.0
+    predictions = {
+        "m5_72h_probability": 0.0,
+        "max_mag_7d_prediction": 0.0,
+        "time_to_next_event_hours_prediction": None,
+        "next_event_distance_km_prediction": None,
+        "next_event_magnitude_prediction": None,
+    }
+
     m5_model = aux_models.get("m5_72h")
     if m5_model is not None:
         try:
-            m5_prob = float(m5_model.predict_proba(X)[0, 1])
+            predictions["m5_72h_probability"] = float(m5_model.predict_proba(X)[0, 1])
         except Exception:
-            m5_prob = 0.0
+            predictions["m5_72h_probability"] = 0.0
 
-    max_mag_7d = 0.0
     max_mag_model = aux_models.get("max_mag_7d")
     if max_mag_model is not None:
         try:
-            max_mag_7d = float(max_mag_model.predict(X)[0])
+            predictions["max_mag_7d_prediction"] = float(max_mag_model.predict(X)[0])
         except Exception:
-            max_mag_7d = 0.0
+            predictions["max_mag_7d_prediction"] = 0.0
 
-    return float(m5_prob), float(max_mag_7d)
+    time_model = aux_models.get("time_to_next_event_hours")
+    if time_model is not None:
+        try:
+            predictions["time_to_next_event_hours_prediction"] = _optional_float(
+                time_model.predict(X)[0],
+                min_value=0.0,
+                max_value=next_event_horizon,
+            )
+        except Exception:
+            predictions["time_to_next_event_hours_prediction"] = None
+
+    distance_model = aux_models.get("next_event_distance_km")
+    if distance_model is not None:
+        try:
+            predictions["next_event_distance_km_prediction"] = _optional_float(
+                distance_model.predict(X)[0],
+                min_value=0.0,
+            )
+        except Exception:
+            predictions["next_event_distance_km_prediction"] = None
+
+    magnitude_model = aux_models.get("next_event_magnitude")
+    if magnitude_model is not None:
+        try:
+            predictions["next_event_magnitude_prediction"] = _optional_float(
+                magnitude_model.predict(X)[0],
+                min_value=0.0,
+            )
+        except Exception:
+            predictions["next_event_magnitude_prediction"] = None
+
+    return predictions
 
 
 def predict_with_model_data(
@@ -223,6 +292,10 @@ def predict_with_model_data(
             "gnn_probability": float(signals["gnn_probability"]),
             "m5_72h_probability": 0.0,
             "max_mag_7d_prediction": 0.0,
+            "time_to_next_event_hours_prediction": None,
+            "next_event_distance_km_prediction": None,
+            "next_event_magnitude_prediction": None,
+            "next_event_time_window": None,
             "locality_score": float(locality_score),
             "ensemble_weights": _dynamic_weights(feats),
             "signal_event_count": int(signals["signal_event_count"]),
@@ -241,7 +314,7 @@ def predict_with_model_data(
         }
 
     ml_prob = float(model_data["model"].predict_proba(X)[0, 1])
-    m5_prob, max_mag_7d = _predict_auxiliary_targets(model_data, X)
+    aux_predictions = _predict_auxiliary_targets(model_data, X)
     weights = _dynamic_weights(feats)
 
     final_prob = (
@@ -263,8 +336,12 @@ def predict_with_model_data(
         "b_value": float(signals["b_value"]),
         "b_risk": float(signals["b_risk"]),
         "gnn_probability": float(signals["gnn_probability"]),
-        "m5_72h_probability": float(_clamp01(m5_prob)),
-        "max_mag_7d_prediction": float(max_mag_7d),
+        "m5_72h_probability": float(_clamp01(aux_predictions["m5_72h_probability"])),
+        "max_mag_7d_prediction": float(aux_predictions["max_mag_7d_prediction"]),
+        "time_to_next_event_hours_prediction": aux_predictions["time_to_next_event_hours_prediction"],
+        "next_event_distance_km_prediction": aux_predictions["next_event_distance_km_prediction"],
+        "next_event_magnitude_prediction": aux_predictions["next_event_magnitude_prediction"],
+        "next_event_time_window": _lead_time_window(aux_predictions["time_to_next_event_hours_prediction"]),
         "locality_score": float(locality_score),
         "ensemble_weights": weights,
         "signal_event_count": int(signals["signal_event_count"]),

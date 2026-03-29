@@ -1,7 +1,0 @@
-// item.innerHTML içindeki ilgili satır:
-item.innerHTML = `
-    <p class="info">
-        Zaman: ${formattedDateTime} | 
-        Derinlik: ${deprem.depth} km
-    </p>
-`;

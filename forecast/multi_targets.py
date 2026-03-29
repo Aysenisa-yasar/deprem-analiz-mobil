@@ -6,6 +6,10 @@ def build_multi_targets(events, lat, lon, ref_ts, radius_km=100.0):
         "m4_24h": 0,
         "m5_72h": 0,
         "max_mag_7d": 0.0,
+        "next_event_within_7d": 0,
+        "time_to_next_event_hours": None,
+        "next_event_distance_km": None,
+        "next_event_magnitude": None,
     }
 
     for event in events:
@@ -27,6 +31,12 @@ def build_multi_targets(events, lat, lon, ref_ts, radius_km=100.0):
             continue
 
         mag = float(event.get("mag", 0) or 0)
+
+        if targets["time_to_next_event_hours"] is None or dt_hours < targets["time_to_next_event_hours"]:
+            targets["next_event_within_7d"] = 1
+            targets["time_to_next_event_hours"] = float(dt_hours)
+            targets["next_event_distance_km"] = float(dist)
+            targets["next_event_magnitude"] = float(mag)
 
         if dt_hours <= 24.0 and mag >= 4.0:
             targets["m4_24h"] = 1

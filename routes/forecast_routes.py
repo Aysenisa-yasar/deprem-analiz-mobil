@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from services.anomaly_service import anomaly_score
 from services.data_service import load_events
@@ -63,6 +63,10 @@ def forecast_map_v2():
                 "gnn_probability": pred.get("gnn_probability", 0.0),
                 "m5_72h_probability": pred.get("m5_72h_probability", 0.0),
                 "max_mag_7d_prediction": pred.get("max_mag_7d_prediction", 0.0),
+                "time_to_next_event_hours_prediction": pred.get("time_to_next_event_hours_prediction"),
+                "next_event_distance_km_prediction": pred.get("next_event_distance_km_prediction"),
+                "next_event_magnitude_prediction": pred.get("next_event_magnitude_prediction"),
+                "next_event_time_window": pred.get("next_event_time_window"),
                 "locality_score": pred.get("locality_score", 0.0),
                 "risk_level": risk_level,
                 "anomaly_score": round(ano, 2),
@@ -105,3 +109,26 @@ def forecast_grid_v2():
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e), "points": []}), 500
+
+
+@forecast_bp.route("/api/v2/recent-earthquakes", methods=["GET"])
+def recent_earthquakes_v2():
+    """Mobil ve istemciler için son deprem listesi (Kandilli/USGS birleşik önbellek)."""
+    try:
+        events = load_events()
+        sorted_e = sorted(events, key=lambda x: -x["timestamp"])
+        limit = min(max(1, int(request.args.get("limit", 80) or 80)), 200)
+        out = []
+        for e in sorted_e[:limit]:
+            ek = f"{e['lat']:.4f}_{e['lon']:.4f}_{int(e['timestamp'])}_{e['mag']:.1f}"
+            out.append({
+                "lat": e["lat"],
+                "lon": e["lon"],
+                "mag": e["mag"],
+                "depth": e["depth"],
+                "timestamp": e["timestamp"],
+                "event_key": ek,
+            })
+        return jsonify({"status": "success", "events": out})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "events": []}), 500

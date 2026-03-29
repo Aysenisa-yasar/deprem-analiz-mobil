@@ -38,6 +38,7 @@ models/*.pt
 # Data files
 earthquake_history.json
 user_alerts.json
+data/mobile_social.db
 
 # IDE
 .vscode/

@@ -1,18 +1,18 @@
+# Render Blueprint — dashboard’dan "Blueprint" ile içe aktarın veya Web Service’i manuel oluşturun.
+# https://render.com/docs/blueprint-spec
 services:
   - type: web
-    name: deprem-izleme-sistemi
-    env: python
+    name: depremanaliz-api
+    runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+    # Kalıcı SQLite (mobil kullanıcı/mesaj) için: Dashboard > Disk ekle, örn. mount /data ve DATA_DIR=/data
+    # disk:
+    #   name: veri
+    #   mountPath: /data
+    #   sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: PORT
-        value: 10000
-      - key: TWILIO_ACCOUNT_SID
-        sync: false
-      - key: TWILIO_AUTH_TOKEN
-        sync: false
-      - key: TWILIO_WHATSAPP_NUMBER
-        sync: false
-
+        value: "3.11.0"
+    # Kalıcı mobil SQLite için Disk ekleyin; sonra Environment’a DATA_DIR=/data (mountPath ile aynı) ekleyin.
+    # PostgreSQL (deprem arşivi): yeni Postgres → DATABASE_URL’i bu servise bağlayın.

@@ -4,7 +4,8 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 MODEL_DIR = os.path.join(BASE_DIR, "models")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Render Persistent Disk: ortamda DATA_DIR=/data gibi bağlanan yol verilebilir.
+DATA_DIR = os.path.normpath(os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data")))
 
 FORECAST_MODEL = os.path.join(MODEL_DIR, "forecast_latest.pkl")
 
