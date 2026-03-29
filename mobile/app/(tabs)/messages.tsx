@@ -1,7 +1,8 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -11,11 +12,31 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
+import { theme, type ThemeTokens } from '@/constants/theme';
 import { fetchMessages, sendMessage, type ChatMessage } from '@/lib/api';
 
-export default function MesajlarScreen() {
+const POLL_MS = 50_000;
+const TAB_BAR_CLEARANCE = 58;
+
+function formatMessageTime(createdAt: number): string {
+  return new Date(createdAt * 1000).toLocaleTimeString('tr-TR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export default function MessagesScreen() {
+  const colorScheme = useColorScheme();
+  const scheme = colorScheme === 'dark' ? 'dark' : 'light';
+  const t = theme[scheme];
+  const styles = useMemo(() => makeStyles(t), [t]);
+  const insets = useSafeAreaInsets();
+  const composePadBottom = 14 + Math.max(insets.bottom, 8) + TAB_BAR_CLEARANCE;
+
   const { token, user, apiBase, ready } = useAuth();
   const [list, setList] = useState<ChatMessage[]>([]);
   const [toUser, setToUser] = useState('');
@@ -25,9 +46,15 @@ export default function MesajlarScreen() {
   const listRef = useRef<ChatMessage[]>([]);
   listRef.current = list;
 
+  useEffect(() => {
+    if (user?.emergency_contact && !toUser.trim()) {
+      setToUser(user.emergency_contact);
+    }
+  }, [toUser, user?.emergency_contact]);
+
   const mergeMessages = useCallback((prev: ChatMessage[], incoming: ChatMessage[]) => {
-    const ids = new Set(prev.map((m) => m.id));
-    const add = incoming.filter((m) => !ids.has(m.id));
+    const ids = new Set(prev.map((item) => item.id));
+    const add = incoming.filter((item) => !ids.has(item.id));
     if (!add.length) return prev;
     return [...prev, ...add].sort((a, b) => a.id - b.id);
   }, []);
@@ -42,11 +69,12 @@ export default function MesajlarScreen() {
     setList([]);
 
     const poll = async () => {
+      if (AppState.currentState !== 'active') return;
       const prev = listRef.current;
-      const since = prev.length ? Math.max(...prev.map((m) => m.id)) : 0;
+      const since = prev.length ? Math.max(...prev.map((item) => item.id)) : 0;
       try {
-        const msg = await fetchMessages(apiBase, token, since);
-        if (msg.length) setList((p) => mergeMessages(p, msg));
+        const messages = await fetchMessages(apiBase, token, since);
+        if (messages.length) setList((current) => mergeMessages(current, messages));
       } catch {
         /* offline */
       }
@@ -62,24 +90,30 @@ export default function MesajlarScreen() {
       }
     })();
 
-    const id = setInterval(poll, 8000);
-    return () => clearInterval(id);
-  }, [ready, token, apiBase, mergeMessages]);
+    const intervalId = setInterval(() => {
+      void poll();
+    }, POLL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [apiBase, mergeMessages, ready, token]);
 
   const onSend = async () => {
     if (!token || !user) return;
     setSendErr(null);
-    const u = toUser.trim();
-    const b = body.trim();
-    if (!u || !b) {
-      setSendErr('Kullanıcı adı ve mesaj gerekli');
+
+    const recipient = toUser.trim();
+    const content = body.trim();
+    if (!recipient || !content) {
+      setSendErr('Kullanici adi ve mesaj gerekli.');
       return;
     }
-    const r = await sendMessage(apiBase, token, u, b);
-    if (!r.ok) {
-      setSendErr(r.message || 'Gönderilemedi');
+
+    const result = await sendMessage(apiBase, token, recipient, content);
+    if (!result.ok) {
+      setSendErr(result.message || 'Mesaj gonderilemedi.');
       return;
     }
+
     setBody('');
     const fresh = await fetchMessages(apiBase, token, 0);
     setList(fresh);
@@ -98,106 +132,189 @@ export default function MesajlarScreen() {
 
   if (!ready) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" />
+      <View style={[styles.center, { backgroundColor: t.bg }]}>
+        <ActivityIndicator size="large" color={t.accent} />
       </View>
     );
   }
 
   if (!token) {
     return (
-      <View style={styles.center}>
-        <FontAwesome name="lock" size={40} color="#71717a" />
-        <Text style={styles.hint}>Mesajlaşmak için Ayarlar sekmesinden giriş yapın.</Text>
+      <View style={[styles.center, { backgroundColor: t.bg }]}>
+        <View style={[styles.lockCircle, { backgroundColor: t.surfaceMuted }]}>
+          <FontAwesome name="comments" size={32} color={t.accent} />
+        </View>
+        <Text style={[styles.hintTitle, { color: t.text }]}>Mesajlar</Text>
+        <Text style={[styles.hint, { color: t.textSecondary }]}>
+          Hesapla giris yaptiginda kullanici adiyla birebir mesajlasabilir ve acil durum
+          bildirimlerini gorebilirsin.
+        </Text>
       </View>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      style={styles.flex}
+      style={[styles.flex, { backgroundColor: t.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={80}>
-      <View style={styles.container}>
-        <Text style={styles.head}>Gelen / giden</Text>
-        <FlatList
-          data={list}
-          keyExtractor={(m) => String(m.id)}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          renderItem={({ item }) => {
-            const mine = item.from_user.toLowerCase() === user?.username.toLowerCase();
-            return (
-              <View
+      keyboardVerticalOffset={88}>
+      <View style={styles.topPad}>
+        <Text style={[styles.head, { color: t.text }]}>Sohbet</Text>
+        <Text style={[styles.headSub, { color: t.textMuted }]}>
+          Arka plan yenileme aktif degil. Ekran acikken yaklasik {Math.round(POLL_MS / 1000)} sn
+          arayla kontrol edilir.
+        </Text>
+      </View>
+
+      <FlatList
+        data={list}
+        keyExtractor={(item) => String(item.id)}
+        removeClippedSubviews={Platform.OS === 'android'}
+        style={styles.list}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 24 + composePadBottom }]}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        renderItem={({ item }) => {
+          const mine = item.from_user.toLowerCase() === user?.username.toLowerCase();
+          const alert = item.kind === 'location_alert';
+          return (
+            <View
+              style={[
+                styles.bubble,
+                mine ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' },
+                mine
+                  ? { backgroundColor: t.accent, borderTopRightRadius: 4 }
+                  : {
+                      backgroundColor: t.surface,
+                      borderColor: t.border,
+                      borderWidth: 1,
+                      borderTopLeftRadius: 4,
+                    },
+                alert && !mine ? { borderColor: t.warn } : null,
+              ]}>
+              <Text
                 style={[
-                  styles.bubble,
-                  mine ? styles.bubbleMine : styles.bubbleOther,
+                  styles.meta,
+                  { color: mine ? 'rgba(255,255,255,0.88)' : t.textMuted },
                 ]}>
-                <Text style={styles.meta}>
-                  {mine ? 'Sen' : item.from_user} → {item.to_user}
-                  {item.kind === 'location_alert' ? ' · konum uyarısı' : ''}
-                </Text>
-                <Text style={styles.bodyText}>{item.body}</Text>
-              </View>
-            );
-          }}
-        />
-        {sendErr ? <Text style={styles.err}>{sendErr}</Text> : null}
-        <View style={styles.compose}>
-          <TextInput
-            placeholder="Alıcı kullanıcı adı"
-            placeholderTextColor="#a1a1aa"
-            autoCapitalize="none"
-            style={styles.input}
-            value={toUser}
-            onChangeText={setToUser}
-          />
-          <TextInput
-            placeholder="Mesaj yazın"
-            placeholderTextColor="#a1a1aa"
-            style={[styles.input, styles.inputMulti]}
-            value={body}
-            onChangeText={setBody}
-            multiline
-          />
-          <Pressable style={styles.btn} onPress={onSend}>
-            <Text style={styles.btnText}>Gönder</Text>
+                {mine ? 'Sen' : item.from_user}
+                {' -> '}
+                {item.to_user}
+                {alert ? ' · konum uyarisi' : ''} · {formatMessageTime(item.created_at)}
+              </Text>
+              <Text style={[styles.bodyText, { color: mine ? '#fff' : t.text }]}>
+                {item.body}
+              </Text>
+            </View>
+          );
+        }}
+      />
+
+      {sendErr ? <Text style={[styles.err, { color: t.danger }]}>{sendErr}</Text> : null}
+
+      <View
+        style={[
+          styles.compose,
+          { backgroundColor: t.surface, borderTopColor: t.border, paddingBottom: composePadBottom },
+        ]}>
+        {user?.emergency_contact ? (
+          <Pressable
+            onPress={() => setToUser(user.emergency_contact ?? '')}
+            style={[styles.contactChip, { backgroundColor: t.surfaceMuted }]}>
+            <FontAwesome name="bolt" size={12} color={t.brandTab} />
+            <Text style={[styles.contactChipText, { color: t.text }]}>
+              Acil kisi: @{user.emergency_contact}
+            </Text>
           </Pressable>
-        </View>
+        ) : null}
+
+        <TextInput
+          placeholder="Alici kullanici adi"
+          placeholderTextColor={t.textMuted}
+          autoCapitalize="none"
+          style={[
+            styles.input,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          value={toUser}
+          onChangeText={setToUser}
+        />
+        <TextInput
+          placeholder="Mesajiniz..."
+          placeholderTextColor={t.textMuted}
+          style={[
+            styles.input,
+            styles.inputMulti,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          value={body}
+          onChangeText={setBody}
+          multiline
+        />
+        <Pressable
+          style={({ pressed }) => [
+            styles.btn,
+            { backgroundColor: pressed ? t.accentRipple : t.accent, opacity: pressed ? 0.95 : 1 },
+          ]}
+          onPress={() => void onSend()}>
+          <Text style={[styles.btnText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
+            Gonder
+          </Text>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  container: { flex: 1, paddingTop: 12, backgroundColor: '#f4f4f5' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  hint: { marginTop: 12, textAlign: 'center', color: '#52525b' },
-  head: { fontSize: 18, fontWeight: '700', paddingHorizontal: 16, marginBottom: 8 },
-  err: { color: '#b91c1c', paddingHorizontal: 16 },
-  bubble: {
-    marginHorizontal: 12,
-    marginBottom: 8,
-    padding: 12,
-    borderRadius: 12,
-    maxWidth: '92%',
-  },
-  bubbleMine: { alignSelf: 'flex-end', backgroundColor: '#dbeafe' },
-  bubbleOther: { alignSelf: 'flex-start', backgroundColor: '#fff', borderWidth: 1, borderColor: '#e4e4e7' },
-  meta: { fontSize: 11, color: '#71717a', marginBottom: 4 },
-  bodyText: { fontSize: 15, color: '#18181b' },
-  compose: { padding: 12, borderTopWidth: 1, borderTopColor: '#e4e4e7', backgroundColor: '#fafafa' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d4d4d8',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
-    backgroundColor: '#fff',
-    fontSize: 15,
-  },
-  inputMulti: { minHeight: 64, textAlignVertical: 'top' },
-  btn: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center' },
-  btnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-});
+function makeStyles(t: ThemeTokens) {
+  return StyleSheet.create({
+    flex: { flex: 1 },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 },
+    lockCircle: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 16,
+    },
+    hintTitle: { fontSize: 20, fontWeight: '700' },
+    hint: { marginTop: 8, textAlign: 'center', lineHeight: 22, maxWidth: 280 },
+    topPad: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+    head: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
+    headSub: { fontSize: 12, marginTop: 4, lineHeight: 18 },
+    list: { flex: 1 },
+    listContent: {},
+    err: { paddingHorizontal: 16, marginBottom: 4, fontSize: 13 },
+    bubble: {
+      marginHorizontal: 14,
+      marginBottom: 10,
+      padding: 14,
+      borderRadius: 18,
+      maxWidth: '88%',
+    },
+    meta: { fontSize: 11, marginBottom: 6, fontWeight: '500' },
+    bodyText: { fontSize: 15, lineHeight: 21 },
+    compose: { padding: 14, paddingTop: 14, borderTopWidth: 1, gap: 8 },
+    contactChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      gap: 6,
+    },
+    contactChipText: { fontSize: 12, fontWeight: '700' },
+    input: {
+      borderWidth: 1,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+    },
+    inputMulti: { minHeight: 72, textAlignVertical: 'top' },
+    btn: { paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+    btnText: { fontWeight: '700', fontSize: 16 },
+  });
+}

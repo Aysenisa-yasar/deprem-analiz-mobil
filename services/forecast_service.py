@@ -1,4 +1,4 @@
-from forecast.predictor import predict
+from forecast.predictor import build_model_health, load_model, predict_with_model_data
 
 
 def _optional_float(value):
@@ -7,10 +7,20 @@ def _optional_float(value):
     return float(value)
 
 
-def forecast_city(events: list, city: dict, explain: bool = False) -> dict:
-    lat = city["lat"]
-    lon = city["lon"]
-    pred = predict(events, lat, lon, explain=explain)
+def forecast_point(
+    events: list,
+    lat: float,
+    lon: float,
+    explain: bool = False,
+    model_data: dict | None = None,
+) -> dict:
+    pred = predict_with_model_data(
+        model_data if model_data is not None else load_model(),
+        events,
+        lat,
+        lon,
+        explain=explain,
+    )
     prob = pred["probability"]
     risk = min(10.0, max(0.0, prob * 10.0))
     return {
@@ -30,6 +40,7 @@ def forecast_city(events: list, city: dict, explain: bool = False) -> dict:
         "next_event_time_window": pred.get("next_event_time_window"),
         "locality_score": float(pred.get("locality_score", 0.0)),
         "risk_score": round(risk, 2),
+        "model_health": pred.get("model_health", {}),
         "top_features": pred.get("top_features", []),
         "features": pred.get("features", {}),
         "ensemble_weights": pred.get("ensemble_weights", {}),
@@ -45,3 +56,22 @@ def forecast_city(events: list, city: dict, explain: bool = False) -> dict:
         "depth_variance": float(pred.get("depth_variance", 0.0)),
         "nearest_fault_segment": pred.get("nearest_fault_segment", "unknown"),
     }
+
+
+def forecast_city(
+    events: list,
+    city: dict,
+    explain: bool = False,
+    model_data: dict | None = None,
+) -> dict:
+    return forecast_point(
+        events,
+        city["lat"],
+        city["lon"],
+        explain=explain,
+        model_data=model_data,
+    )
+
+
+def get_forecast_model_health(model_data: dict | None = None) -> dict:
+    return build_model_health(model_data if model_data is not None else load_model())

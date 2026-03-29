@@ -7,6 +7,35 @@ export type ForecastPoint = {
   risk_level: string;
   m5_72h_probability?: number;
   max_mag_7d_prediction?: number;
+  signal_event_count?: number;
+  fault_distance?: number;
+  model_health?: ModelHealth;
+};
+
+export type ModelHealth = {
+  available: boolean;
+  quality_level: string;
+  quality_label: string;
+  quality_score: number;
+  trained_at?: string | null;
+  model_type?: string;
+  summary?: string;
+  signal_event_count?: number;
+  metrics?: {
+    roc_auc_mean?: number | null;
+    pr_auc_mean?: number | null;
+    brier_mean?: number | null;
+    samples?: number;
+    positive_rate?: number | null;
+    folds?: number;
+  };
+  backtest?: {
+    hit_rate?: number | null;
+    positive_rate?: number | null;
+    samples?: number;
+    threshold?: number | null;
+    mean_prob?: number | null;
+  };
 };
 
 export type QuakeEvent = {
@@ -75,6 +104,42 @@ export async function fetchForecastMap(baseUrl: string): Promise<ForecastPoint[]
     return [];
   }
   return data.points;
+}
+
+export async function fetchForecastLocation(
+  baseUrl: string,
+  lat: number,
+  lon: number
+): Promise<{ point: ForecastPoint | null; modelHealth: ModelHealth | null }> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    point?: ForecastPoint;
+    model_health?: ModelHealth;
+  }>(`${base}/api/v2/forecast-location?lat=${lat}&lon=${lon}`);
+  if (!ok || !data || data.status !== 'success') {
+    if (!ok) throw new Error('network');
+    return { point: null, modelHealth: null };
+  }
+  return {
+    point: data.point ?? null,
+    modelHealth: data.model_health ?? null,
+  };
+}
+
+export async function fetchForecastModelStatus(
+  baseUrl: string
+): Promise<ModelHealth | null> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    model_health?: ModelHealth;
+  }>(`${base}/api/v2/forecast-model-status`);
+  if (!ok || !data || data.status !== 'success') {
+    if (!ok) throw new Error('network');
+    return null;
+  }
+  return data.model_health ?? null;
 }
 
 export async function fetchRecentQuakes(

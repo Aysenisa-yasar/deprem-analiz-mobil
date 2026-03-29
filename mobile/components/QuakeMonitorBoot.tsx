@@ -1,9 +1,11 @@
+import { useAlertPreferences } from '@/context/AlertPreferencesContext';
 import { useAuth } from '@/context/AuthContext';
 import { useQuakeAlertMonitor } from '@/hooks/useQuakeAlertMonitor';
 
-/** Arka planda M5+ / 150 km kontrolü (ön planda periyodik). */
 export function QuakeMonitorBoot() {
   const { apiBase, token, user } = useAuth();
-  useQuakeAlertMonitor(apiBase, token, user?.emergency_contact ?? null);
+  const { preferences } = useAlertPreferences();
+
+  useQuakeAlertMonitor(apiBase, token, user?.emergency_contact ?? null, preferences);
   return null;
 }

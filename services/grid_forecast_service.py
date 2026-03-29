@@ -1,5 +1,5 @@
 from forecast.grid import generate_turkey_grid
-from forecast.predictor import predict
+from forecast.predictor import load_model, predict_with_model_data
 
 
 def _optional_float(value):
@@ -10,9 +10,10 @@ def _optional_float(value):
 
 def forecast_grid(events, step=0.5):
     grid = generate_turkey_grid(step=step)
+    model_data = load_model()
     results = []
     for p in grid:
-        pred = predict(events, p["lat"], p["lon"], explain=False)
+        pred = predict_with_model_data(model_data, events, p["lat"], p["lon"], explain=False)
         prob = pred["probability"]
         results.append({
             "id": p["id"],

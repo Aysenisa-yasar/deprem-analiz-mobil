@@ -1,5 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -7,244 +7,421 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
 
+import { useColorScheme } from '@/components/useColorScheme';
+import {
+  useAlertPreferences,
+  type AlertPreferences,
+} from '@/context/AlertPreferencesContext';
 import { useAuth } from '@/context/AuthContext';
-import { DEFAULT_API_URL } from '@/lib/config';
+import { theme, type ThemeTokens } from '@/constants/theme';
 import { setEmergencyContact } from '@/lib/api';
+import { DEFAULT_API_URL } from '@/lib/config';
 
-export default function AyarlarScreen() {
+export default function SettingsScreen() {
+  const colorScheme = useColorScheme();
+  const scheme = colorScheme === 'dark' ? 'dark' : 'light';
+  const t = theme[scheme];
+  const styles = useMemo(() => makeStyles(t), [t]);
+
   const { ready, token, user, apiBase, setApiBase, login, register, logout, refreshMe } =
     useAuth();
+  const { ready: alertsReady, preferences, updatePreferences } = useAlertPreferences();
+
   const [urlInput, setUrlInput] = useState(apiBase);
   const [userIn, setUserIn] = useState('');
   const [passIn, setPassIn] = useState('');
   const [contactIn, setContactIn] = useState('');
+  const [alertForm, setAlertForm] = useState<AlertPreferences>(preferences);
+  const [alertMagnitudeInput, setAlertMagnitudeInput] = useState(String(preferences.minMagnitude));
+  const [alertDistanceInput, setAlertDistanceInput] = useState(String(preferences.maxDistanceKm));
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setUrlInput(apiBase);
   }, [apiBase]);
 
   useEffect(() => {
-    if (user?.emergency_contact) setContactIn(user.emergency_contact);
+    setAlertForm(preferences);
+    setAlertMagnitudeInput(String(preferences.minMagnitude));
+    setAlertDistanceInput(String(preferences.maxDistanceKm));
+  }, [preferences]);
+
+  useEffect(() => {
+    if (user?.emergency_contact) {
+      setContactIn(user.emergency_contact);
+    }
   }, [user?.emergency_contact]);
 
-  if (!ready) {
+  if (!ready || !alertsReady) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" />
+      <View style={[styles.center, { backgroundColor: t.bg }]}>
+        <ActivityIndicator size="large" color={t.accent} />
       </View>
     );
   }
 
   const saveUrl = async () => {
-    const u = urlInput.trim() || DEFAULT_API_URL;
-    await setApiBase(u);
-    setMsg('API adresi kaydedildi');
+    const nextUrl = urlInput.trim() || DEFAULT_API_URL;
+    await setApiBase(nextUrl);
+    setMessage('API adresi kaydedildi.');
   };
 
   const doLogin = async () => {
     setBusy(true);
-    setMsg(null);
-    const r = await login(userIn.trim(), passIn);
+    setMessage(null);
+    const result = await login(userIn.trim(), passIn);
     setBusy(false);
-    if (!r.ok) setMsg(r.message || 'Hata');
-    else {
-      setMsg('Giriş OK');
-      setPassIn('');
+    if (!result.ok) {
+      setMessage(result.message || 'Giris yapilamadi.');
+      return;
     }
+    setPassIn('');
+    setMessage('Giris basarili.');
   };
 
   const doRegister = async () => {
     setBusy(true);
-    setMsg(null);
-    const r = await register(userIn.trim(), passIn);
+    setMessage(null);
+    const result = await register(userIn.trim(), passIn);
     setBusy(false);
-    if (!r.ok) setMsg(r.message || 'Hata');
-    else {
-      setMsg('Kayıt OK');
-      setPassIn('');
+    if (!result.ok) {
+      setMessage(result.message || 'Kayit olusturulamadi.');
+      return;
     }
+    setPassIn('');
+    setMessage('Kayit tamamlandi.');
   };
 
   const saveContact = async () => {
     if (!token) {
-      setMsg('Önce giriş yapın');
+      setMessage('Once giris yapin.');
       return;
     }
+
     setBusy(true);
-    const r = await setEmergencyContact(apiBase, token, contactIn.trim());
+    const result = await setEmergencyContact(apiBase, token, contactIn.trim());
     setBusy(false);
-    if (!r.ok) setMsg(r.message || 'Kaydedilemedi');
-    else {
-      setMsg('Acil kişi güncellendi');
-      await refreshMe();
+    if (!result.ok) {
+      setMessage(result.message || 'Acil kisi kaydedilemedi.');
+      return;
     }
+
+    await refreshMe();
+    setMessage('Acil kisi guncellendi.');
+  };
+
+  const saveAlertPreferences = async () => {
+    const minMagnitude = Number(alertMagnitudeInput.replace(',', '.'));
+    const maxDistanceKm = Number(alertDistanceInput);
+
+    await updatePreferences({
+      enabled: alertForm.enabled,
+      minMagnitude: Number.isFinite(minMagnitude) ? minMagnitude : preferences.minMagnitude,
+      maxDistanceKm: Number.isFinite(maxDistanceKm) ? maxDistanceKm : preferences.maxDistanceKm,
+    });
+    setMessage('Ozel uyari ayarlari kaydedildi.');
   };
 
   const askLocation = async () => {
     const fg = await Location.requestForegroundPermissionsAsync();
     if (fg.status !== 'granted') {
-      Alert.alert('Konum', 'Deprem uyarısı için konum izni gerekir.');
+      Alert.alert('Konum', 'Deprem uyarilari icin konum izni gerekiyor.');
       return;
     }
+
     if (Platform.OS === 'ios') {
       try {
-        const bg = await Location.requestBackgroundPermissionsAsync();
-        if (bg.status !== 'granted') {
-          Alert.alert(
-            'Arka plan',
-            'Uyarılar ön planda çalışır. Tam arka plan için ek ayar gerekebilir.'
-          );
-        }
+        await Location.requestBackgroundPermissionsAsync();
       } catch {
-        /* Simulator / web uyumsuzluğu */
+        /* ignore */
       }
     }
-    setMsg('Konum izni verildi');
+
+    setMessage('Konum izni verildi.');
   };
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.pad}>
-      <Text style={styles.title}>Hesap ve sunucu</Text>
-      <Text style={styles.label}>API kök URL</Text>
-      <TextInput
-        style={styles.input}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder={DEFAULT_API_URL}
-        placeholderTextColor="#a1a1aa"
-        value={urlInput}
-        onChangeText={setUrlInput}
-      />
-      <Pressable style={styles.secondary} onPress={saveUrl}>
-        <Text style={styles.secondaryText}>API kaydet</Text>
-      </Pressable>
+    <ScrollView
+      style={[styles.scroll, { backgroundColor: t.bg }]}
+      contentContainerStyle={styles.pad}
+      keyboardShouldPersistTaps="handled">
+      <View style={[styles.heroCard, { backgroundColor: t.surfaceMuted, borderColor: t.border }]}>
+        <FontAwesome name="sliders" size={18} color={t.brandTab} />
+        <View style={styles.heroBody}>
+          <Text style={[styles.heroTitle, { color: t.text }]}>Guvenli ve kisisel kullanim</Text>
+          <Text style={[styles.heroText, { color: t.textSecondary }]}>
+            Ozel uyari esiklerini, acil kisini ve baglandigin API adresini bu ekrandan yonet.
+          </Text>
+        </View>
+      </View>
 
-      <Text style={styles.section}>Giriş / kayıt (kullanıcı adı ile)</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Kullanıcı adı"
-        placeholderTextColor="#a1a1aa"
-        autoCapitalize="none"
-        value={userIn}
-        onChangeText={setUserIn}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Şifre"
-        placeholderTextColor="#a1a1aa"
-        secureTextEntry
-        value={passIn}
-        onChangeText={setPassIn}
-      />
-      <View style={styles.row}>
-        <Pressable style={[styles.btn, styles.flex1]} onPress={doLogin} disabled={busy}>
-          <Text style={styles.btnText}>Giriş</Text>
-        </Pressable>
+      <Text style={[styles.sectionTitle, { color: t.text }]}>Hesap</Text>
+      <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
+        {token && user ? (
+          <View style={[styles.accountRow, { backgroundColor: t.surfaceMuted }]}>
+            <FontAwesome name="check-circle" size={18} color={t.success} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.accountName, { color: t.text }]}>@{user.username}</Text>
+              <Text style={[styles.accountSub, { color: t.textSecondary }]}>
+                Mesajlasma ve acil bildirimler aktif.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <Text style={[styles.helper, { color: t.textSecondary }]}>
+            Hesap acinca mesajlar, acil durum durumlari ve otomatik konum paylasimi kullanilabilir.
+          </Text>
+        )}
+
+        {!token ? (
+          <>
+            <TextInput
+              style={[
+                styles.input,
+                { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+              ]}
+              placeholder="Kullanici adi"
+              placeholderTextColor={t.textMuted}
+              autoCapitalize="none"
+              value={userIn}
+              onChangeText={setUserIn}
+            />
+            <TextInput
+              style={[
+                styles.input,
+                { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+              ]}
+              placeholder="Sifre"
+              placeholderTextColor={t.textMuted}
+              secureTextEntry
+              value={passIn}
+              onChangeText={setPassIn}
+            />
+            <View style={styles.row}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.primaryBtn,
+                  styles.flex1,
+                  { backgroundColor: pressed || busy ? t.accentRipple : t.accent },
+                ]}
+                onPress={() => void doLogin()}
+                disabled={busy}>
+                <Text style={[styles.primaryBtnText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
+                  Giris
+                </Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.outlineBtn,
+                  styles.flex1,
+                  { borderColor: t.accent, opacity: pressed || busy ? 0.82 : 1 },
+                ]}
+                onPress={() => void doRegister()}
+                disabled={busy}>
+                <Text style={[styles.outlineBtnText, { color: t.accent }]}>Kayit ol</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <Pressable style={styles.logoutBtn} onPress={logout}>
+            <Text style={[styles.logoutText, { color: t.danger }]}>Cikis yap</Text>
+          </Pressable>
+        )}
+      </View>
+
+      <Text style={[styles.sectionTitle, { color: t.text }]}>Ozel uyarilar</Text>
+      <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
+        <View style={styles.switchRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.fieldTitle, { color: t.text }]}>Sesli yakin deprem uyarisi</Text>
+            <Text style={[styles.helper, { color: t.textSecondary }]}>
+              Uygulama acikken secilen buyukluk ve mesafe esigine gore cihazda ses cikarir.
+            </Text>
+          </View>
+          <Switch
+            value={alertForm.enabled}
+            onValueChange={(value) => setAlertForm((current) => ({ ...current, enabled: value }))}
+            trackColor={{ false: t.border, true: t.accent }}
+            thumbColor={scheme === 'dark' ? t.surface : '#fff'}
+          />
+        </View>
+
+        <Text style={[styles.label, { color: t.textMuted }]}>Minimum buyukluk</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          keyboardType="decimal-pad"
+          value={alertMagnitudeInput}
+          onChangeText={setAlertMagnitudeInput}
+        />
+
+        <Text style={[styles.label, { color: t.textMuted }]}>Maksimum mesafe (km)</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          keyboardType="number-pad"
+          value={alertDistanceInput}
+          onChangeText={setAlertDistanceInput}
+        />
+
+        <Text style={[styles.note, { color: t.textSecondary }]}>
+          Acil kisiya otomatik konum paylasimi guvenlik icin sabit esikte calisir: M5+ ve 150 km.
+        </Text>
+
         <Pressable
-          style={[styles.btn, styles.outline, styles.flex1]}
-          onPress={doRegister}
-          disabled={busy}>
-          <Text style={styles.outlineText}>Kayıt ol</Text>
+          style={({ pressed }) => [
+            styles.primaryBtn,
+            { backgroundColor: pressed ? t.accentRipple : t.accent },
+          ]}
+          onPress={() => void saveAlertPreferences()}>
+          <Text style={[styles.primaryBtnText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
+            Uyari tercihlerini kaydet
+          </Text>
         </Pressable>
       </View>
 
-      {token && user ? (
-        <View style={styles.box}>
-          <FontAwesome name="check-circle" size={20} color="#16a34a" />
-          <Text style={styles.userLine}>@{user.username}</Text>
-          {user.emergency_contact ? (
-            <Text style={styles.sub}>
-              Acil kişi: @{user.emergency_contact}
-            </Text>
-          ) : (
-            <Text style={styles.warn}>Acil kişi seçilmedi (M5+ uyarısı gönderilmez)</Text>
-          )}
-        </View>
-      ) : null}
-
-      <Text style={styles.section}>Acil iletişim (M5+, 150 km)</Text>
-      <Text style={styles.hint}>
-        Deprem büyüklüğü 5 ve üzeri ve sizden 150 km içindeyken seçtiğiniz kullanıcıya otomatik
-        konum mesajı gider. Alıcı önce uygulamaya kayıtlı olmalı.
-      </Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Acil kişi kullanıcı adı"
-        placeholderTextColor="#a1a1aa"
-        autoCapitalize="none"
-        value={contactIn}
-        onChangeText={setContactIn}
-      />
-      <Pressable style={styles.btn} onPress={saveContact} disabled={busy || !token}>
-        <Text style={styles.btnText}>Acil kişiyi kaydet</Text>
-      </Pressable>
-
-      <Pressable style={styles.secondary} onPress={askLocation}>
-        <Text style={styles.secondaryText}>Konum iznini iste</Text>
-      </Pressable>
-
-      {token ? (
-        <Pressable style={styles.danger} onPress={logout}>
-          <Text style={styles.dangerText}>Çıkış</Text>
+      <Text style={[styles.sectionTitle, { color: t.text }]}>Acil kisi</Text>
+      <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
+        <Text style={[styles.helper, { color: t.textSecondary }]}>
+          Acil ekrandaki hizli durum mesajlari ve otomatik konum paylasimi bu kullaniciya gider.
+        </Text>
+        <TextInput
+          style={[
+            styles.input,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          placeholder="Acil kisi kullanici adi"
+          placeholderTextColor={t.textMuted}
+          autoCapitalize="none"
+          value={contactIn}
+          onChangeText={setContactIn}
+        />
+        <Pressable
+          style={({ pressed }) => [
+            styles.primaryBtn,
+            { backgroundColor: pressed || busy || !token ? t.accentRipple : t.accent, opacity: !token ? 0.6 : 1 },
+          ]}
+          onPress={() => void saveContact()}
+          disabled={busy || !token}>
+          <Text style={[styles.primaryBtnText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
+            Acil kisiyi kaydet
+          </Text>
         </Pressable>
-      ) : null}
+        <Pressable style={styles.locationLink} onPress={() => void askLocation()}>
+          <FontAwesome name="map-marker" size={15} color={t.brandTab} />
+          <Text style={[styles.locationLinkText, { color: t.brandTab }]}> Konum izni ver</Text>
+        </Pressable>
+      </View>
 
-      {msg ? <Text style={styles.msg}>{msg}</Text> : null}
+      <Text style={[styles.sectionTitle, { color: t.text }]}>Sunucu</Text>
+      <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
+        <Text style={[styles.label, { color: t.textMuted }]}>API kok URL</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
+          ]}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder={DEFAULT_API_URL}
+          placeholderTextColor={t.textMuted}
+          value={urlInput}
+          onChangeText={setUrlInput}
+        />
+        <Pressable
+          style={({ pressed }) => [
+            styles.outlineBtn,
+            { borderColor: t.accent, opacity: pressed ? 0.82 : 1 },
+          ]}
+          onPress={() => void saveUrl()}>
+          <Text style={[styles.outlineBtnText, { color: t.accent }]}>API adresini kaydet</Text>
+        </Pressable>
+      </View>
+
+      {message ? (
+        <Text style={[styles.message, { color: t.textSecondary, backgroundColor: t.surfaceMuted }]}>
+          {message}
+        </Text>
+      ) : null}
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: '#f4f4f5' },
-  pad: { padding: 16, paddingBottom: 48 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '700', marginBottom: 12 },
-  section: { fontSize: 16, fontWeight: '600', marginTop: 20, marginBottom: 8 },
-  label: { fontSize: 13, color: '#52525b', marginBottom: 4 },
-  hint: { fontSize: 13, color: '#71717a', marginBottom: 8, lineHeight: 18 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d4d4d8',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#fff',
-    fontSize: 16,
-    marginBottom: 10,
-  },
-  row: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  flex1: { flex: 1 },
-  btn: {
-    backgroundColor: '#2563eb',
-    padding: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  btnText: { color: '#fff', fontWeight: '600' },
-  outline: { backgroundColor: 'transparent', borderWidth: 2, borderColor: '#2563eb' },
-  outlineText: { color: '#2563eb', fontWeight: '600' },
-  secondary: { padding: 12, alignItems: 'center' },
-  secondaryText: { color: '#2563eb', fontWeight: '500' },
-  box: {
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: '#ecfdf5',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-  },
-  userLine: { fontSize: 16, fontWeight: '600', marginTop: 6 },
-  sub: { fontSize: 14, color: '#166534', marginTop: 4 },
-  warn: { fontSize: 13, color: '#b45309', marginTop: 4 },
-  danger: { marginTop: 24, padding: 14, alignItems: 'center' },
-  dangerText: { color: '#b91c1c', fontWeight: '600' },
-  msg: { marginTop: 16, color: '#52525b' },
-});
+function makeStyles(t: ThemeTokens) {
+  return StyleSheet.create({
+    scroll: { flex: 1 },
+    pad: { padding: 18, paddingBottom: 120, gap: 12 },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    heroCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 16,
+      flexDirection: 'row',
+      gap: 12,
+      marginBottom: 8,
+    },
+    heroBody: { flex: 1, gap: 4 },
+    heroTitle: { fontSize: 17, fontWeight: '800' },
+    heroText: { fontSize: 13, lineHeight: 19 },
+    sectionTitle: { fontSize: 13, fontWeight: '800', marginTop: 8 },
+    card: {
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 16,
+      gap: 10,
+    },
+    helper: { fontSize: 13, lineHeight: 19 },
+    fieldTitle: { fontSize: 15, fontWeight: '700' },
+    label: { fontSize: 12, fontWeight: '700', marginTop: 2 },
+    note: { fontSize: 12, lineHeight: 18 },
+    input: {
+      borderWidth: 1,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      fontSize: 15,
+    },
+    row: { flexDirection: 'row', gap: 10 },
+    flex1: { flex: 1 },
+    primaryBtn: {
+      borderRadius: 14,
+      alignItems: 'center',
+      paddingVertical: 14,
+    },
+    primaryBtnText: { fontSize: 15, fontWeight: '800' },
+    outlineBtn: {
+      borderRadius: 14,
+      alignItems: 'center',
+      paddingVertical: 14,
+      borderWidth: 2,
+    },
+    outlineBtnText: { fontSize: 15, fontWeight: '800' },
+    accountRow: {
+      borderRadius: 14,
+      padding: 14,
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+    },
+    accountName: { fontSize: 15, fontWeight: '800' },
+    accountSub: { fontSize: 12, lineHeight: 18, marginTop: 2 },
+    logoutBtn: { alignItems: 'center', paddingVertical: 8 },
+    logoutText: { fontSize: 15, fontWeight: '800' },
+    switchRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+    locationLink: { alignItems: 'center', justifyContent: 'center', paddingVertical: 8, flexDirection: 'row' },
+    locationLinkText: { fontSize: 14, fontWeight: '700' },
+    message: { borderRadius: 12, padding: 12, fontSize: 13, lineHeight: 18 },
+  });
+}

@@ -47,7 +47,7 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://127.0.0.1:5000"
+      "apiUrl": "https://deprem-analiz-mobil.onrender.com"
     },
     "experiments": {
       "typedRoutes": true

@@ -73,6 +73,117 @@ def _optional_float(value, min_value=None, max_value=None):
     return float(numeric)
 
 
+def _mean_score(values: list[float]) -> float:
+    finite = [float(v) for v in values if v is not None]
+    if not finite:
+        return 0.0
+    return float(np.mean(finite))
+
+
+def _quality_level(score: float) -> str:
+    if score >= 0.72:
+        return "high"
+    if score >= 0.52:
+        return "medium"
+    return "experimental"
+
+
+def _quality_label(level: str) -> str:
+    if level == "high":
+        return "Yuksek guven"
+    if level == "medium":
+        return "Orta guven"
+    return "Deneysel"
+
+
+def build_model_health(model_data: dict | None, signal_event_count: int | None = None) -> dict:
+    if not model_data or "model" not in model_data:
+        return {
+            "available": False,
+            "quality_level": "no_model",
+            "quality_label": "Model yok",
+            "quality_score": 0.0,
+            "trained_at": None,
+            "model_type": "no_forecast_model",
+            "summary": "Egitilmis bir forecast modeli bulunamadi. Sonuclar yalnizca kural tabanli sinyallere dayanabilir.",
+            "metrics": {},
+            "backtest": {},
+            "signal_event_count": int(signal_event_count or 0),
+        }
+
+    metrics = model_data.get("metrics") or {}
+    backtest = model_data.get("backtest") or {}
+
+    roc_auc = _optional_float(metrics.get("roc_auc_mean"), min_value=0.0, max_value=1.0)
+    pr_auc = _optional_float(metrics.get("pr_auc_mean"), min_value=0.0, max_value=1.0)
+    brier = _optional_float(metrics.get("brier_mean"), min_value=0.0, max_value=1.0)
+    hit_rate = _optional_float(backtest.get("hit_rate"), min_value=0.0, max_value=1.0)
+    positive_rate = _optional_float(backtest.get("positive_rate"), min_value=0.0, max_value=1.0)
+
+    component_scores = []
+    if roc_auc is not None:
+        component_scores.append(_clamp01((roc_auc - 0.5) / 0.3))
+    if pr_auc is not None and positive_rate is not None:
+        lift_denom = max(0.05, 1.0 - positive_rate)
+        component_scores.append(_clamp01((pr_auc - positive_rate) / lift_denom))
+    if brier is not None:
+        component_scores.append(_clamp01(1.0 - (brier / 0.35)))
+    if hit_rate is not None and positive_rate is not None:
+        gain_denom = max(0.05, 1.0 - positive_rate)
+        component_scores.append(_clamp01((hit_rate - positive_rate) / gain_denom))
+
+    base_score = _mean_score(component_scores)
+    if signal_event_count is None:
+        quality_score = base_score
+    else:
+        signal_score = _clamp01(float(signal_event_count) / 24.0)
+        quality_score = float(0.72 * base_score + 0.28 * signal_score)
+
+    level = _quality_level(quality_score)
+    signal_note = ""
+    if signal_event_count is not None and signal_event_count < 8:
+        if level == "high":
+            level = "medium"
+        elif level == "medium":
+            level = "experimental"
+        signal_note = f" Bu bolgede sinyal event sayisi dusuk ({int(signal_event_count)})."
+
+    if level == "high":
+        summary = "Model kalibrasyon ve backtest metriklerinde guclu gorunuyor; yine de sonuc kesin zaman tahmini degil, kisa vadeli bolgesel olasilik sinyalidir."
+    elif level == "medium":
+        summary = "Model kullanilabilir bir risk sinyali uretiyor ancak hata payi belirgin; karar verirken resmi uyarilarla birlikte yorumlanmali."
+    else:
+        summary = "Model halen deneysel seviyede; cikti yalnizca destekleyici risk gostergesi olarak kullanilmali."
+
+    summary += signal_note
+
+    return {
+        "available": True,
+        "quality_level": level,
+        "quality_label": _quality_label(level),
+        "quality_score": float(round(quality_score, 4)),
+        "trained_at": model_data.get("trained_at"),
+        "model_type": model_data.get("model_type", MODEL_TYPE),
+        "summary": summary,
+        "metrics": {
+            "roc_auc_mean": roc_auc,
+            "pr_auc_mean": pr_auc,
+            "brier_mean": brier,
+            "samples": int(metrics.get("samples", 0) or 0),
+            "positive_rate": _optional_float(metrics.get("positive_rate"), min_value=0.0, max_value=1.0),
+            "folds": int(metrics.get("folds", 0) or 0),
+        },
+        "backtest": {
+            "hit_rate": hit_rate,
+            "positive_rate": positive_rate,
+            "samples": int(backtest.get("samples", 0) or 0),
+            "threshold": _optional_float(backtest.get("threshold"), min_value=0.0, max_value=1.0),
+            "mean_prob": _optional_float(backtest.get("mean_prob"), min_value=0.0, max_value=1.0),
+        },
+        "signal_event_count": int(signal_event_count or 0),
+    }
+
+
 def _lead_time_window(hours):
     lead_hours = _optional_float(hours, min_value=0.0)
     if lead_hours is None:
@@ -276,6 +387,7 @@ def predict_with_model_data(
     locality_score = _locality_score(feats, signals)
 
     if not model_data or "model" not in model_data:
+        model_health = build_model_health(model_data, signal_event_count=signals["signal_event_count"])
         fallback_prob = _clamp01(
             0.50 * etas_prob
             + 0.25 * signals["cluster_score"]
@@ -299,6 +411,7 @@ def predict_with_model_data(
             "locality_score": float(locality_score),
             "ensemble_weights": _dynamic_weights(feats),
             "signal_event_count": int(signals["signal_event_count"]),
+            "model_health": model_health,
             "features": feats,
             "top_features": [],
             "model_type": "no_forecast_model",
@@ -316,6 +429,7 @@ def predict_with_model_data(
     ml_prob = float(model_data["model"].predict_proba(X)[0, 1])
     aux_predictions = _predict_auxiliary_targets(model_data, X)
     weights = _dynamic_weights(feats)
+    model_health = build_model_health(model_data, signal_event_count=signals["signal_event_count"])
 
     final_prob = (
         weights["ml"] * ml_prob
@@ -345,6 +459,7 @@ def predict_with_model_data(
         "locality_score": float(locality_score),
         "ensemble_weights": weights,
         "signal_event_count": int(signals["signal_event_count"]),
+        "model_health": model_health,
         "features": feats,
         "top_features": [],
         "model_type": model_data.get("model_type", MODEL_TYPE),
