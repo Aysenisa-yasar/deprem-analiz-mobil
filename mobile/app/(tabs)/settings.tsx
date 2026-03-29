@@ -173,11 +173,27 @@ export default function SettingsScreen() {
               <Text style={[styles.accountSub, { color: t.textSecondary }]}>
                 Mesajlasma ve acil bildirimler aktif.
               </Text>
+              {user.auth_channel ? (
+                <Text style={[styles.accountSub, { color: t.textSecondary }]}>
+                  Giris yontemi: {user.auth_channel}
+                </Text>
+              ) : null}
+              {user.phone ? (
+                <Text style={[styles.accountSub, { color: t.textSecondary }]}>
+                  Telefon: {user.phone}
+                </Text>
+              ) : null}
+              {user.email ? (
+                <Text style={[styles.accountSub, { color: t.textSecondary }]}>
+                  E-posta: {user.email}
+                </Text>
+              ) : null}
             </View>
           </View>
         ) : (
           <Text style={[styles.helper, { color: t.textSecondary }]}>
             Hesap acinca mesajlar, acil durum durumlari ve otomatik konum paylasimi kullanilabilir.
+            Ilk ekranda telefon veya e-posta ile kod akisi da destekleniyor.
           </Text>
         )}
 

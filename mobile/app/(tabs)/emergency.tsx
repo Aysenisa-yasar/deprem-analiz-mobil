@@ -11,6 +11,11 @@ import { useAuth } from '@/context/AuthContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { startSirenLoop, stopSirenLoop } from '@/lib/alertAudio';
 import { sendMessage } from '@/lib/api';
+import {
+  flushOfflineRelayQueue,
+  getOfflineRelayQueue,
+  queueOfflineRelayPacket,
+} from '@/lib/offlineRelay';
 
 export default function EmergencyScreen() {
   const colorScheme = useColorScheme();
@@ -22,6 +27,8 @@ export default function EmergencyScreen() {
   const [sirenOn, setSirenOn] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [queueBusy, setQueueBusy] = useState(false);
 
   const headerTint = t.brandOnHeader;
   const bodyBg = scheme === 'dark' ? '#1c1917' : '#fff7ed';
@@ -42,6 +49,18 @@ export default function EmergencyScreen() {
     });
     return () => sub.remove();
   }, [sirenOn]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadQueue = async () => {
+      const queue = await getOfflineRelayQueue();
+      if (mounted) setQueuedCount(queue.length);
+    };
+    void loadQueue();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const toggleSiren = async () => {
     if (sirenOn) {
@@ -87,11 +106,39 @@ export default function EmergencyScreen() {
     setBusyKey(null);
 
     if (!result.ok) {
+      if (result.retryable) {
+        await queueOfflineRelayPacket({
+          toUsername: emergencyContact,
+          body,
+          kind: 'emergency',
+        });
+        const queue = await getOfflineRelayQueue();
+        setQueuedCount(queue.length);
+        setMessage('Ag yok gibi gorunuyor. Acil durum mesaji cihazda kuyruga alindi.');
+        return;
+      }
       setMessage(result.message || 'Durum mesaji gonderilemedi.');
       return;
     }
 
     setMessage(`Durum mesaji @${emergencyContact} kullanicisina gonderildi.`);
+  };
+
+  const flushQueue = async () => {
+    if (!token) return;
+    setQueueBusy(true);
+    setMessage(null);
+    try {
+      const result = await flushOfflineRelayQueue(apiBase, token);
+      setQueuedCount(result.remaining);
+      if (result.remaining > 0) {
+        setMessage(`Kuyruktaki ${result.remaining} mesaj henuz gonderilemedi.`);
+        return;
+      }
+      setMessage(result.sent > 0 ? 'Kuyruktaki acil mesajlar gonderildi.' : 'Kuyruk bos.');
+    } finally {
+      setQueueBusy(false);
+    }
   };
 
   return (
@@ -143,6 +190,44 @@ export default function EmergencyScreen() {
           </View>
           <Pressable onPress={() => router.push('/settings')}>
             <Text style={[styles.contactLink, { color: t.brandTab }]}>Ayarla</Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.queueCard, { backgroundColor: t.surface, borderColor: t.border }]}>
+          <FontAwesome name="exchange" size={18} color={t.brandTab} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.contactTitle, { color: t.text }]}>Offline acil kuyruk</Text>
+            <Text style={[styles.contactBody, { color: t.textSecondary }]}>
+              Ag yokken SOS mesajlari cihazda saklanir. Gercek internetsiz cihazlar arasi iletisim
+              icin native mesh altyapisi gerekiyor.
+            </Text>
+            <Text style={[styles.queueMeta, { color: t.textMuted }]}>Kuyruktaki mesaj: {queuedCount}</Text>
+          </View>
+          <Pressable
+            onPress={() => router.push('/mesh' as never)}
+            style={({ pressed }) => [
+              styles.queueBtn,
+              { backgroundColor: pressed ? t.accentRipple : t.accent },
+            ]}>
+            <Text style={[styles.queueBtnText, { color: '#fff' }]}>Mesh</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void flushQueue()}
+            disabled={queueBusy || queuedCount === 0}
+            style={({ pressed }) => [
+              styles.queueBtn,
+              {
+                backgroundColor:
+                  queueBusy || queuedCount === 0
+                    ? t.surfaceMuted
+                    : pressed
+                      ? t.accentRipple
+                      : t.accent,
+              },
+            ]}>
+            <Text style={[styles.queueBtnText, { color: queueBusy || queuedCount === 0 ? t.textMuted : '#fff' }]}>
+              {queueBusy ? 'Dene' : 'Yolla'}
+            </Text>
           </Pressable>
         </View>
 
@@ -292,6 +377,24 @@ function makeStyles(t: ThemeTokens) {
     contactTitle: { fontSize: 15, fontWeight: '800' },
     contactBody: { fontSize: 12, lineHeight: 18, marginTop: 2 },
     contactLink: { fontSize: 14, fontWeight: '800' },
+    queueCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 14,
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+      marginBottom: 18,
+    },
+    queueMeta: { fontSize: 12, fontWeight: '700', marginTop: 6 },
+    queueBtn: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+    },
+    queueBtnText: { fontSize: 13, fontWeight: '800' },
     sectionLbl: {
       fontSize: 12,
       fontWeight: '700',

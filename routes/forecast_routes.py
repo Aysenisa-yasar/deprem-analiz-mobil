@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 
+from constants.turkey_cities import TURKEY_CITIES
 from forecast.predictor import load_model
 from services.anomaly_service import anomaly_score
 from services.data_service import load_events
@@ -13,34 +14,6 @@ from services.grid_forecast_service import forecast_grid
 forecast_bp = Blueprint("forecast", __name__)
 
 MODEL_TYPE = "forecast_hybrid_v3_timeseriescv"
-
-CITIES = {
-    "Istanbul": {"lat": 41.0082, "lon": 28.9784},
-    "Ankara": {"lat": 39.9334, "lon": 32.8597},
-    "Izmir": {"lat": 38.4237, "lon": 27.1428},
-    "Bursa": {"lat": 40.1826, "lon": 29.0665},
-    "Antalya": {"lat": 36.8969, "lon": 30.7133},
-    "Adana": {"lat": 36.9914, "lon": 35.3308},
-    "Konya": {"lat": 37.8746, "lon": 32.4932},
-    "Gaziantep": {"lat": 37.0662, "lon": 37.3833},
-    "Kocaeli": {"lat": 40.8533, "lon": 29.8815},
-    "Kayseri": {"lat": 38.7312, "lon": 35.4787},
-    "Erzurum": {"lat": 39.9043, "lon": 41.2679},
-    "Van": {"lat": 38.5012, "lon": 43.3722},
-    "Malatya": {"lat": 38.3552, "lon": 38.3095},
-    "Kahramanmaras": {"lat": 37.5858, "lon": 36.9371},
-    "Denizli": {"lat": 37.7765, "lon": 29.0864},
-    "Sanliurfa": {"lat": 37.1674, "lon": 38.7955},
-    "Eskisehir": {"lat": 39.7767, "lon": 30.5206},
-    "Diyarbakir": {"lat": 37.9144, "lon": 40.2306},
-    "Samsun": {"lat": 41.2867, "lon": 36.3300},
-    "Elazig": {"lat": 38.6748, "lon": 39.2225},
-    "Hatay": {"lat": 36.4018, "lon": 36.3498},
-    "Manisa": {"lat": 38.6191, "lon": 27.4289},
-    "Trabzon": {"lat": 41.0015, "lon": 39.7178},
-    "Mugla": {"lat": 37.2153, "lon": 28.3636},
-    "Mersin": {"lat": 36.8000, "lon": 34.6333},
-}
 
 
 def _risk_level(risk_score: float) -> str:
@@ -100,7 +73,7 @@ def forecast_map_v2():
         model_data = load_model()
         model_health = get_forecast_model_health(model_data)
         points = []
-        for name, city in CITIES.items():
+        for name, city in TURKEY_CITIES.items():
             pred = forecast_city(events, city, explain=True, model_data=model_data)
             anomaly_value = anomaly_score(events, city["lat"], city["lon"])
             points.append(_build_point_payload(name, city["lat"], city["lon"], pred, anomaly_value))

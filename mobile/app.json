@@ -16,8 +16,9 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "M5 ve üzeri yakın depremlerde acil kişinize konum göndermek için kullanılır.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Uygulama açıkken deprem yakını tespiti için konum kullanılır."
+        "NSLocationWhenInUseUsageDescription": "M5 ve uzeri yakin depremlerde acil kisinize konum gondermek icin kullanilir.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Uygulama acikken deprem yakinligi tespiti icin konum kullanilir.",
+        "NSBluetoothAlwaysUsageDescription": "Yakin cihazlarla internetsiz haberlesme icin Bluetooth kullanilir."
       }
     },
     "android": {
@@ -29,7 +30,11 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "BLUETOOTH_ADVERTISE",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "NEARBY_WIFI_DEVICES"
       ]
     },
     "web": {
@@ -38,11 +43,19 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Deprem uyarıları için konum kullanılır (M5+, 150 km)."
+          "locationAlwaysAndWhenInUsePermission": "Deprem uyarilari icin konum kullanilir (M5+, 150 km)."
+        }
+      ],
+      [
+        "expo-nearby-connections",
+        {
+          "bonjourServicesName": "deprem-analiz",
+          "localNetworkUsagePermissionText": "$(PRODUCT_NAME) yakin cihazlarla internetsiz haberlesmek icin yerel aga erisim ister."
         }
       ]
     ],

@@ -6,9 +6,11 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import * as Linking from 'expo-linking';
 
 import { DEFAULT_API_URL } from '@/lib/config';
-import { fetchMe, loginRequest, registerRequest } from '@/lib/api';
+import { exchangeSupabaseSession, fetchMe, loginRequest, registerRequest } from '@/lib/api';
+import { bindSupabaseAppState, hydrateSupabaseSessionFromUrl, isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
   clearStoredToken,
   getStoredApiBase,
@@ -20,6 +22,9 @@ import {
 type User = {
   username: string;
   emergency_contact: string | null;
+  phone?: string | null;
+  email?: string | null;
+  auth_channel?: string | null;
 };
 
 type AuthContextValue = {
@@ -30,6 +35,8 @@ type AuthContextValue = {
   setApiBase: (url: string) => Promise<void>;
   login: (u: string, p: string) => Promise<{ ok: boolean; message?: string }>;
   register: (u: string, p: string) => Promise<{ ok: boolean; message?: string }>;
+  completeLoginWithToken: (token: string) => Promise<void>;
+  completeLoginWithSupabaseAccessToken: (accessToken: string) => Promise<{ ok: boolean; message?: string }>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
@@ -41,6 +48,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [apiBase, setApiBaseState] = useState(DEFAULT_API_URL);
   const [ready, setReady] = useState(false);
+
+  const completeLoginWithSupabaseAccessToken = useCallback(
+    async (accessToken: string) => {
+      const result = await exchangeSupabaseSession(apiBase, accessToken);
+      if (!result.ok || !result.token) {
+        return { ok: false, message: result.message };
+      }
+      await setStoredToken(result.token);
+      setToken(result.token);
+      return { ok: true };
+    },
+    [apiBase]
+  );
 
   useEffect(() => {
     (async () => {
@@ -54,6 +74,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    bindSupabaseAppState();
+
+    let active = true;
+    const syncFromUrl = async (url: string | null) => {
+      if (!url) return;
+      const changed = await hydrateSupabaseSessionFromUrl(url);
+      if (!changed || !active) return;
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) return;
+      await completeLoginWithSupabaseAccessToken(accessToken);
+    };
+
+    void Linking.getInitialURL().then(syncFromUrl);
+
+    const linkSub = Linking.addEventListener('url', (event) => {
+      void syncFromUrl(event.url);
+    });
+
+    const authSub = supabase.auth.onAuthStateChange((_event, session) => {
+      const accessToken = session?.access_token;
+      if (!accessToken) return;
+      void completeLoginWithSupabaseAccessToken(accessToken);
+    });
+
+    return () => {
+      active = false;
+      linkSub.remove();
+      authSub.data.subscription.unsubscribe();
+    };
+  }, [completeLoginWithSupabaseAccessToken]);
 
   const refreshMe = useCallback(async () => {
     const t = await getStoredToken();
@@ -112,9 +167,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
     await clearStoredToken();
     setToken(null);
     setUser(null);
+  }, []);
+
+  const completeLoginWithToken = useCallback(async (value: string) => {
+    await setStoredToken(value);
+    setToken(value);
   }, []);
 
   const value = useMemo(
@@ -126,10 +189,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setApiBase,
       login,
       register,
+      completeLoginWithToken,
+      completeLoginWithSupabaseAccessToken,
       logout,
       refreshMe,
     }),
-    [token, user, apiBase, ready, setApiBase, login, register, logout, refreshMe]
+    [
+      token,
+      user,
+      apiBase,
+      ready,
+      setApiBase,
+      login,
+      register,
+      completeLoginWithToken,
+      completeLoginWithSupabaseAccessToken,
+      logout,
+      refreshMe,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

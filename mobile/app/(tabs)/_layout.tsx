@@ -58,7 +58,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Depremler',
+          title: 'Canli',
           headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="heartbeat" color={color} />,
         }}
@@ -66,14 +66,29 @@ export default function TabLayout() {
       <Tabs.Screen
         name="forecast"
         options={{
-          title: 'Tahmin',
+          title: 'Risk',
           tabBarIcon: ({ color }) => <TabBarIcon name="line-chart" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="assistant"
+        options={{
+          title: 'Asistan',
+          tabBarIcon: ({ color }) => <TabBarIcon name="magic" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="mesh"
+        options={{
+          title: 'Yakin Ag',
+          href: null,
+          tabBarIcon: ({ color }) => <TabBarIcon name="wifi" color={color} />,
         }}
       />
       <Tabs.Screen
         name="messages"
         options={{
-          title: 'Mesajlar',
+          title: 'Mesaj',
           tabBarIcon: ({ color }) => <TabBarIcon name="comments" color={color} />,
         }}
       />
@@ -88,7 +103,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Ayarlar',
+          title: 'Ayar',
           tabBarIcon: ({ color }) => <TabBarIcon name="cog" color={color} />,
         }}
       />

@@ -1,4 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,6 +19,11 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { fetchMessages, sendMessage, type ChatMessage } from '@/lib/api';
+import {
+  flushOfflineRelayQueue,
+  getOfflineRelayQueue,
+  queueOfflineRelayPacket,
+} from '@/lib/offlineRelay';
 
 const POLL_MS = 50_000;
 const TAB_BAR_CLEARANCE = 58;
@@ -42,6 +48,8 @@ export default function MessagesScreen() {
   const [toUser, setToUser] = useState('');
   const [body, setBody] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [queueBusy, setQueueBusy] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const listRef = useRef<ChatMessage[]>([]);
   listRef.current = list;
@@ -51,6 +59,18 @@ export default function MessagesScreen() {
       setToUser(user.emergency_contact);
     }
   }, [toUser, user?.emergency_contact]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadQueue = async () => {
+      const queue = await getOfflineRelayQueue();
+      if (mounted) setQueuedCount(queue.length);
+    };
+    void loadQueue();
+    return () => {
+      mounted = false;
+    };
+  }, [token]);
 
   const mergeMessages = useCallback((prev: ChatMessage[], incoming: ChatMessage[]) => {
     const ids = new Set(prev.map((item) => item.id));
@@ -110,6 +130,17 @@ export default function MessagesScreen() {
 
     const result = await sendMessage(apiBase, token, recipient, content);
     if (!result.ok) {
+      if (result.retryable) {
+        await queueOfflineRelayPacket({
+          toUsername: recipient,
+          body: content,
+          kind: 'chat',
+        });
+        const queue = await getOfflineRelayQueue();
+        setQueuedCount(queue.length);
+        setSendErr('Ag baglantisi yok gibi gorunuyor. Mesaj cihazda kuyruga alindi.');
+        return;
+      }
       setSendErr(result.message || 'Mesaj gonderilemedi.');
       return;
     }
@@ -117,6 +148,27 @@ export default function MessagesScreen() {
     setBody('');
     const fresh = await fetchMessages(apiBase, token, 0);
     setList(fresh);
+  };
+
+  const onFlushQueue = async () => {
+    if (!token) return;
+    setQueueBusy(true);
+    setSendErr(null);
+    try {
+      const result = await flushOfflineRelayQueue(apiBase, token);
+      setQueuedCount(result.remaining);
+      if (result.sent > 0) {
+        const fresh = await fetchMessages(apiBase, token, 0);
+        setList(fresh);
+      }
+      if (result.remaining > 0) {
+        setSendErr(`Kuyrukta ${result.remaining} mesaj kaldi. Hala ag veya alici sorunu olabilir.`);
+        return;
+      }
+      setSendErr(result.sent > 0 ? 'Kuyruktaki mesajlar gonderildi.' : 'Kuyruk zaten bos.');
+    } finally {
+      setQueueBusy(false);
+    }
   };
 
   const onRefresh = async () => {
@@ -164,6 +216,42 @@ export default function MessagesScreen() {
           Arka plan yenileme aktif degil. Ekran acikken yaklasik {Math.round(POLL_MS / 1000)} sn
           arayla kontrol edilir.
         </Text>
+        <Pressable
+          onPress={() => router.push('/mesh' as never)}
+          style={[styles.meshLink, { backgroundColor: t.surfaceMuted }]}>
+          <FontAwesome name="wifi" size={14} color={t.brandTab} />
+          <Text style={[styles.meshLinkText, { color: t.text }]}>Yakin ag ekranini ac</Text>
+        </Pressable>
+        <View style={[styles.offlineBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
+          <View style={styles.offlineBannerTextWrap}>
+            <Text style={[styles.offlineTitle, { color: t.text }]}>Offline kuyruk modu</Text>
+            <Text style={[styles.offlineBody, { color: t.textSecondary }]}>
+              Internet yoksa mesajlar cihazda saklanir. Gercek operatorsuz/ internetsiz cihazlar
+              arasi aktarim icin native mesh altyapisi gerekiyor.
+            </Text>
+            <Text style={[styles.offlineMeta, { color: t.textMuted }]}>
+              Kuyruktaki mesaj: {queuedCount}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => void onFlushQueue()}
+            disabled={queueBusy || queuedCount === 0}
+            style={({ pressed }) => [
+              styles.flushBtn,
+              {
+                backgroundColor:
+                  queueBusy || queuedCount === 0
+                    ? t.surfaceMuted
+                    : pressed
+                      ? t.accentRipple
+                      : t.accent,
+              },
+            ]}>
+            <Text style={[styles.flushBtnText, { color: queueBusy || queuedCount === 0 ? t.textMuted : '#fff' }]}>
+              {queueBusy ? 'Deneniyor' : 'Tekrar gonder'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       <FlatList
@@ -283,6 +371,35 @@ function makeStyles(t: ThemeTokens) {
     topPad: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
     head: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
     headSub: { fontSize: 12, marginTop: 4, lineHeight: 18 },
+    meshLink: {
+      marginTop: 10,
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+    },
+    meshLinkText: { fontSize: 12, fontWeight: '800' },
+    offlineBanner: {
+      marginTop: 12,
+      borderWidth: 1,
+      borderRadius: 18,
+      padding: 14,
+      gap: 10,
+    },
+    offlineBannerTextWrap: { gap: 4 },
+    offlineTitle: { fontSize: 14, fontWeight: '800' },
+    offlineBody: { fontSize: 12, lineHeight: 18 },
+    offlineMeta: { fontSize: 12, fontWeight: '700' },
+    flushBtn: {
+      alignItems: 'center',
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+    },
+    flushBtnText: { fontSize: 13, fontWeight: '800' },
     list: { flex: 1 },
     listContent: {},
     err: { paddingHorizontal: 16, marginBottom: 4, fontSize: 13 },

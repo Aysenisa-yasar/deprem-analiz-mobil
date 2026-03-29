@@ -22,6 +22,9 @@ USGS_API = os.getenv(
 AFAD_API = os.getenv("AFAD_API", "")
 FUSION_LOOKBACK_HOURS = int(os.getenv("FUSION_LOOKBACK_HOURS", "168"))
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+
 FAULTS_DIR = os.path.join(DATA_DIR, "faults")
 FAULTS_GEOJSON = os.path.join(FAULTS_DIR, "turkey_faults.geojson")
 FAULTS_SHP = os.path.join(FAULTS_DIR, "turkey_faults.shp")

@@ -1,17 +1,3 @@
-export type ForecastPoint = {
-  city: string;
-  lat: number;
-  lon: number;
-  risk_score: number;
-  probability: number;
-  risk_level: string;
-  m5_72h_probability?: number;
-  max_mag_7d_prediction?: number;
-  signal_event_count?: number;
-  fault_distance?: number;
-  model_health?: ModelHealth;
-};
-
 export type ModelHealth = {
   available: boolean;
   quality_level: string;
@@ -38,6 +24,20 @@ export type ModelHealth = {
   };
 };
 
+export type ForecastPoint = {
+  city: string;
+  lat: number;
+  lon: number;
+  risk_score: number;
+  probability: number;
+  risk_level: string;
+  m5_72h_probability?: number;
+  max_mag_7d_prediction?: number;
+  signal_event_count?: number;
+  fault_distance?: number;
+  model_health?: ModelHealth;
+};
+
 export type QuakeEvent = {
   lat: number;
   lon: number;
@@ -54,26 +54,58 @@ export type ChatMessage = {
   body: string;
   kind: string;
   created_at: number;
+  delivered_at?: number | null;
+  read_at?: number | null;
+};
+
+export type MobileUser = {
+  username: string;
+  emergency_contact: string | null;
+  phone?: string | null;
+  email?: string | null;
+  auth_channel?: string | null;
+};
+
+export type OtpStartResult = {
+  ok: boolean;
+  message?: string;
+  channel?: string;
+  target?: string;
+  expiresInSec?: number;
+  debugCode?: string;
+};
+
+export type ChatbotReply = {
+  response: string;
+  session_id?: string;
+};
+
+export type SupabaseExchangeResult = {
+  ok: boolean;
+  token?: string;
+  username?: string;
+  message?: string;
 };
 
 async function fetchJson<T>(
   url: string,
   init?: RequestInit
 ): Promise<{ ok: boolean; status: number; data: T | null }> {
-  let r: Response;
+  let response: Response;
   try {
-    r = await fetch(url, init);
+    response = await fetch(url, init);
   } catch {
     return { ok: false, status: 0, data: null };
   }
+
   let data: T | null = null;
   try {
-    const text = await r.text();
+    const text = await response.text();
     if (text) data = JSON.parse(text) as T;
   } catch {
     data = null;
   }
-  return { ok: r.ok, status: r.status, data };
+  return { ok: response.ok, status: response.status, data };
 }
 
 export function haversineKm(
@@ -82,7 +114,7 @@ export function haversineKm(
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371;
+  const radius = 6371;
   const p1 = (lat1 * Math.PI) / 180;
   const p2 = (lat2 * Math.PI) / 180;
   const dp = ((lat2 - lat1) * Math.PI) / 180;
@@ -90,7 +122,7 @@ export function haversineKm(
   const a =
     Math.sin(dp / 2) ** 2 +
     Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  return 2 * radius * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 export async function fetchForecastMap(baseUrl: string): Promise<ForecastPoint[]> {
@@ -170,13 +202,12 @@ export async function loginRequest(
       body: JSON.stringify({ username, password }),
     }
   );
-  if (!ok)
-    return {
-      ok: false,
-      message: data?.message || 'Ağ veya sunucu hatası',
-    };
-  if (!data?.token)
-    return { ok: false, message: data?.message || 'Giriş başarısız' };
+  if (!ok) {
+    return { ok: false, message: data?.message || 'Ag veya sunucu hatasi' };
+  }
+  if (!data?.token) {
+    return { ok: false, message: data?.message || 'Giris basarisiz' };
+  }
   return { ok: true, token: data.token };
 }
 
@@ -194,19 +225,92 @@ export async function registerRequest(
       body: JSON.stringify({ username, password }),
     }
   );
-  if (!ok)
-    return {
-      ok: false,
-      message: data?.message || 'Ağ veya sunucu hatası',
-    };
-  if (!data?.token)
-    return { ok: false, message: data?.message || 'Kayıt başarısız' };
+  if (!ok) {
+    return { ok: false, message: data?.message || 'Ag veya sunucu hatasi' };
+  }
+  if (!data?.token) {
+    return { ok: false, message: data?.message || 'Kayit basarisiz' };
+  }
   return { ok: true, token: data.token };
 }
 
+export async function requestLoginCode(
+  baseUrl: string,
+  target: string
+): Promise<OtpStartResult> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    message?: string;
+    channel?: string;
+    target?: string;
+    expires_in_sec?: number;
+    debug_code?: string;
+  }>(`${base}/api/mobile/auth/request-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  });
+  if (!ok || !data) {
+    return { ok: false, message: data?.message || 'Kod gonderilemedi' };
+  }
+  return {
+    ok: data.status === 'ok',
+    message: data.message,
+    channel: data.channel,
+    target: data.target,
+    expiresInSec: data.expires_in_sec,
+    debugCode: data.debug_code,
+  };
+}
+
+export async function verifyLoginCode(
+  baseUrl: string,
+  target: string,
+  code: string
+): Promise<{ ok: boolean; token?: string; username?: string; message?: string }> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    token?: string;
+    username?: string;
+    message?: string;
+  }>(`${base}/api/mobile/auth/verify-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target, code }),
+  });
+  if (!ok || !data || data.status !== 'ok' || !data.token) {
+    return { ok: false, message: data?.message || 'Kod dogrulanamadi' };
+  }
+  return { ok: true, token: data.token, username: data.username };
+}
+
+export async function exchangeSupabaseSession(
+  baseUrl: string,
+  accessToken: string
+): Promise<SupabaseExchangeResult> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    token?: string;
+    username?: string;
+    message?: string;
+  }>(`${base}/api/mobile/auth/supabase-exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ access_token: accessToken }),
+  });
+
+  if (!ok || !data || data.status !== 'ok' || !data.token) {
+    return { ok: false, message: data?.message || 'Supabase oturumu senkronize edilemedi' };
+  }
+
+  return { ok: true, token: data.token, username: data.username };
+}
+
 export type MeResult = {
-  user: { username: string; emergency_contact: string | null } | null;
-  /** Sunucu jetonu reddetti — oturumu kapat */
+  user: MobileUser | null;
   unauthorized: boolean;
 };
 
@@ -216,17 +320,25 @@ export async function fetchMe(baseUrl: string, token: string): Promise<MeResult>
     status?: string;
     username?: string;
     emergency_contact?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    auth_channel?: string | null;
   }>(`${base}/api/mobile/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (status === 401)
+  if (status === 401) {
     return { user: null, unauthorized: true };
-  if (!ok || !data || data.status !== 'ok' || !data.username)
+  }
+  if (!ok || !data || data.status !== 'ok' || !data.username) {
     return { user: null, unauthorized: false };
+  }
   return {
     user: {
       username: data.username,
       emergency_contact: data.emergency_contact ?? null,
+      phone: data.phone ?? null,
+      email: data.email ?? null,
+      auth_channel: data.auth_channel ?? 'password',
     },
     unauthorized: false,
   };
@@ -249,8 +361,9 @@ export async function setEmergencyContact(
       body: JSON.stringify({ contact_username: contactUsername }),
     }
   );
-  if (!ok || !data || data.status !== 'ok')
+  if (!ok || !data || data.status !== 'ok') {
     return { ok: false, message: data?.message || 'Kaydedilemedi' };
+  }
   return { ok: true };
 }
 
@@ -276,9 +389,9 @@ export async function sendMessage(
   token: string,
   toUsername: string,
   body: string
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; retryable?: boolean }> {
   const base = baseUrl.replace(/\/$/, '');
-  const { ok, data } = await fetchJson<{ message?: string; status?: string }>(
+  const { ok, status, data } = await fetchJson<{ message?: string; status?: string }>(
     `${base}/api/mobile/messages`,
     {
       method: 'POST',
@@ -289,8 +402,13 @@ export async function sendMessage(
       body: JSON.stringify({ to_username: toUsername, body }),
     }
   );
-  if (!ok || !data || data.status !== 'ok')
-    return { ok: false, message: data?.message || 'Gönderilemedi' };
+  if (!ok || !data || data.status !== 'ok') {
+    return {
+      ok: false,
+      message: data?.message || 'Gonderilemedi',
+      retryable: status === 0 || status >= 500,
+    };
+  }
   return { ok: true };
 }
 
@@ -317,15 +435,25 @@ export async function sendLocationAlert(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      lat: payload.lat,
-      lon: payload.lon,
-      magnitude: payload.magnitude,
-      epicenter_lat: payload.epicenter_lat,
-      epicenter_lon: payload.epicenter_lon,
-      event_key: payload.event_key,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!ok || !data) return { ok: false };
   return { ok: true, sent: data.sent, reason: data.reason };
+}
+
+export async function askChatbot(
+  baseUrl: string,
+  message: string,
+  sessionId: string
+): Promise<{ ok: boolean; reply?: string; message?: string }> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<ChatbotReply>(`${base}/api/chatbot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+  if (!ok || !data?.response) {
+    return { ok: false, message: 'Asistan yaniti alinamadi' };
+  }
+  return { ok: true, reply: data.response };
 }

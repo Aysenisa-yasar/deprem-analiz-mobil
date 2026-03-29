@@ -22,6 +22,8 @@ def test_forecast_map_v2_json(client):
     assert "status" in data
     assert "points" in data
     assert "model_health" in data
+    if data.get("status") == "success":
+        assert len(data.get("points", [])) >= 81
 
 
 def test_forecast_model_status_v2_returns_health(client):
