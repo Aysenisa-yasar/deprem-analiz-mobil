@@ -75,3 +75,20 @@ git push -u origin main
 ## 5. Blueprint ile oluşturma
 
 Repodaki `render.yaml` dosyasını Render’da **Blueprints** ile içe aktarabilirsiniz; ardından disk ve `DATABASE_URL` gibi değerleri dashboard’dan tamamlayın.
+
+## 6. Modelli deploy icin kritik not
+
+Bu repoda Render build'i artik `scripts/verify_render_assets.py` calistirir.
+Build'in basarili olmasi icin su iki dosyanin GitHub'a push edilmis olmasi gerekir:
+
+- `models/forecast_latest.pkl`
+- `earthquake_history.json`
+
+Bu dosyalar artik `.gitignore` icinde istisna olarak acildi. Yani `git add .` sonrasi deploy'a dahil olabilirler.
+
+Mobil uygulama tarafinda:
+
+- gelistirmede `.env` icindeki `EXPO_PUBLIC_API_URL` onceliklidir
+- deploy/default durumda `mobile/app.json > expo.extra.apiUrl` kullanilir
+
+Boylece yerelde model backend ile calisabilir, Render deploy'unda ise uzak URL otomatik kullanilir.

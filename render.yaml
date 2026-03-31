@@ -4,7 +4,7 @@ services:
   - type: web
     name: depremanaliz-api
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python scripts/verify_render_assets.py
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
     # Kalıcı SQLite (mobil kullanıcı/mesaj) için: Dashboard > Disk ekle, örn. mount /data ve DATA_DIR=/data
     # disk:
@@ -14,5 +14,13 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
+      - key: KANDILLI_TIMEOUT_SEC
+        value: "4"
+      - key: USGS_TIMEOUT_SEC
+        value: "4"
+      - key: AFAD_TIMEOUT_SEC
+        value: "3"
+      - key: LOCAL_EVENT_FILE_FRESH_SEC
+        value: "21600"
     # Kalıcı mobil SQLite için Disk ekleyin; sonra Environment’a DATA_DIR=/data (mountPath ile aynı) ekleyin.
     # PostgreSQL (deprem arşivi): yeni Postgres → DATABASE_URL’i bu servise bağlayın.

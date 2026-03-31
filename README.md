@@ -183,3 +183,14 @@ For scientific context, see the U.S. Geological Survey FAQ on earthquake predict
 ## License
 
 MIT
+
+## Local Model Backend (Windows)
+
+Yerelde egitilmis modeli acmak icin:
+
+```bat
+launch_backend_model.cmd
+```
+
+Bu komut `models/forecast_latest.pkl` ile Flask backend'i baslatir.
+Mobil gelistirmede `.env` icindeki `EXPO_PUBLIC_API_URL` degeri bu yerel backend'i gosterebilir.

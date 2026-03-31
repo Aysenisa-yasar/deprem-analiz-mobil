@@ -86,6 +86,11 @@ export default function ForecastScreen() {
     [points]
   );
   const topHighlights = useMemo(() => sortedPoints.slice(0, 3), [sortedPoints]);
+  const emptyMessage = useMemo(() => {
+    if (err) return 'Risk listesi su an yuklenemedi. Sayfayi yenileyebilirsin.';
+    if (modelHealth?.available) return 'Tahmin listesi hazirlaniyor. Biraz sonra tekrar dene.';
+    return 'Risk listesi henuz hazir degil.';
+  }, [err, modelHealth?.available]);
 
   const loadBase = useCallback(async () => {
     setErr(null);
@@ -99,10 +104,12 @@ export default function ForecastScreen() {
     const mapOk = mapResult.status === 'fulfilled';
     const statusOk = statusResult.status === 'fulfilled';
 
-    setPoints(mapOk ? mapResult.value : []);
-    setHeatPoints(gridResult.status === 'fulfilled' ? gridResult.value : []);
-    setModelHealth(statusOk ? statusResult.value.modelHealth : null);
-    setWarningCapability(statusOk ? statusResult.value.warningCapability : null);
+    if (mapOk) setPoints(mapResult.value);
+    if (gridResult.status === 'fulfilled') setHeatPoints(gridResult.value);
+    if (statusOk) {
+      setModelHealth(statusResult.value.modelHealth);
+      setWarningCapability(statusResult.value.warningCapability);
+    }
 
     if (!mapOk && !statusOk) {
       setErr(
@@ -110,6 +117,10 @@ export default function ForecastScreen() {
           ? 'Sunucuya ulasilamadi. Yerelde backend calisiyor mu ve API adresi dogru mu kontrol edin.'
           : 'Tahmin verisi alinamadi. Ayarlar ekranindaki API adresini kontrol edin.'
       );
+    } else if (!mapOk) {
+      setErr('Risk listesi sunucudan gec geliyor. Model durumu alindi; biraz sonra yeniden deneyebilirsin.');
+    } else if (gridResult.status !== 'fulfilled') {
+      setErr('Isi haritasi gec geliyor. Il listesi ve model durumu hazir.');
     }
     setLoading(false);
   }, [apiBase]);
@@ -509,7 +520,7 @@ export default function ForecastScreen() {
         loading ? (
           <ActivityIndicator style={styles.pad} color={t.accent} />
         ) : (
-          <Text style={[styles.empty, { color: t.textSecondary }]}>Tahmin kaydi bulunamadi.</Text>
+          <Text style={[styles.empty, { color: t.textSecondary }]}>{emptyMessage}</Text>
         )
       }
       renderItem={({ item }) => {

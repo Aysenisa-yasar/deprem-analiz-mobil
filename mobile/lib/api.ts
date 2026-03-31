@@ -187,7 +187,7 @@ export async function fetchForecastMap(baseUrl: string): Promise<ForecastPoint[]
   const { ok, data } = await fetchJson<{
     status?: string;
     points?: ForecastPoint[];
-  }>(`${base}/api/v2/forecast-map`);
+  }>(`${base}/api/v2/forecast-map`, undefined, 20000);
   if (!ok || !data || data.status !== 'success' || !Array.isArray(data.points)) {
     if (!ok) throw new Error('network');
     return [];
@@ -200,7 +200,7 @@ export async function fetchForecastGrid(baseUrl: string): Promise<ForecastGridPo
   const { ok, data } = await fetchJson<{
     status?: string;
     points?: ForecastGridPoint[];
-  }>(`${base}/api/v2/forecast-grid`, undefined, 8000);
+  }>(`${base}/api/v2/forecast-grid`, undefined, 20000);
   if (!ok || !data || data.status !== 'success' || !Array.isArray(data.points)) {
     if (!ok) throw new Error('network');
     return [];
@@ -223,7 +223,7 @@ export async function fetchForecastLocation(
     point?: ForecastPoint;
     model_health?: ModelHealth;
     warning_capability?: WarningCapability;
-  }>(`${base}/api/v2/forecast-location?lat=${lat}&lon=${lon}`);
+  }>(`${base}/api/v2/forecast-location?lat=${lat}&lon=${lon}`, undefined, 15000);
   if (!ok || !data || data.status !== 'success') {
     if (!ok) throw new Error('network');
     return { point: null, modelHealth: null, warningCapability: null };

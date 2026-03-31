@@ -1,3 +1,6 @@
+import time
+from threading import Lock
+
 from flask import Blueprint, jsonify, request
 
 from constants.turkey_cities import TURKEY_CITIES
@@ -15,6 +18,29 @@ from services.grid_forecast_service import forecast_grid
 forecast_bp = Blueprint("forecast", __name__)
 
 MODEL_TYPE = "forecast_hybrid_v3_timeseriescv"
+_RESPONSE_CACHE: dict[str, dict] = {}
+_CACHE_LOCK = Lock()
+_MAP_TTL_SEC = 180
+_GRID_TTL_SEC = 300
+_LOCATION_TTL_SEC = 120
+_RECENT_TTL_SEC = 60
+
+
+def _cache_get(key: str, ttl_sec: int):
+    now = time.time()
+    with _CACHE_LOCK:
+        entry = _RESPONSE_CACHE.get(key)
+        if not entry:
+            return None
+        if (now - entry["timestamp"]) > ttl_sec:
+            _RESPONSE_CACHE.pop(key, None)
+            return None
+        return entry["payload"]
+
+
+def _cache_set(key: str, payload: dict):
+    with _CACHE_LOCK:
+        _RESPONSE_CACHE[key] = {"timestamp": time.time(), "payload": payload}
 
 
 def _risk_level(risk_score: float) -> str:
@@ -72,24 +98,27 @@ def _build_point_payload(name: str, lat: float, lon: float, pred: dict, anomaly_
 @forecast_bp.route("/api/v2/forecast-map", methods=["GET"])
 def forecast_map_v2():
     try:
+        cached = _cache_get("forecast-map", _MAP_TTL_SEC)
+        if cached is not None:
+            return jsonify(cached)
         events = load_events()
         model_data = load_model()
         model_health = get_forecast_model_health(model_data)
         points = []
         for name, city in TURKEY_CITIES.items():
-            pred = forecast_city(events, city, explain=True, model_data=model_data)
+            pred = forecast_city(events, city, explain=False, model_data=model_data)
             anomaly_value = anomaly_score(events, city["lat"], city["lon"])
             points.append(_build_point_payload(name, city["lat"], city["lon"], pred, anomaly_value))
-        return jsonify(
-            {
-                "status": "success",
-                "model_type": MODEL_TYPE,
-                "analysis_window": "past_48h",
-                "model_health": model_health,
-                "warning_capability": get_warning_capability(model_data),
-                "points": points,
-            }
-        )
+        payload = {
+            "status": "success",
+            "model_type": MODEL_TYPE,
+            "analysis_window": "past_48h",
+            "model_health": model_health,
+            "warning_capability": get_warning_capability(model_data),
+            "points": points,
+        }
+        _cache_set("forecast-map", payload)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify(
             {
@@ -105,16 +134,19 @@ def forecast_map_v2():
 @forecast_bp.route("/api/v2/forecast-grid", methods=["GET"])
 def forecast_grid_v2():
     try:
+        cached = _cache_get("forecast-grid", _GRID_TTL_SEC)
+        if cached is not None:
+            return jsonify(cached)
         events = load_events()
-        points = forecast_grid(events, step=0.5)
-        return jsonify(
-            {
-                "status": "success",
-                "model_type": MODEL_TYPE,
-                "grid_step": 0.5,
-                "points": points,
-            }
-        )
+        points = forecast_grid(events, step=0.75)
+        payload = {
+            "status": "success",
+            "model_type": MODEL_TYPE,
+            "grid_step": 0.75,
+            "points": points,
+        }
+        _cache_set("forecast-grid", payload)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({"status": "error", "message": str(exc), "points": []}), 500
 
@@ -151,22 +183,26 @@ def forecast_location_v2():
         return jsonify({"status": "error", "message": "Gecerli lat/lon gerekli"}), 400
 
     try:
+        cache_key = f"forecast-location:{lat:.3f}:{lon:.3f}"
+        cached = _cache_get(cache_key, _LOCATION_TTL_SEC)
+        if cached is not None:
+            return jsonify(cached)
         events = load_events()
         model_data = load_model()
         model_health = get_forecast_model_health(model_data)
-        pred = forecast_point(events, lat, lon, explain=True, model_data=model_data)
+        pred = forecast_point(events, lat, lon, explain=False, model_data=model_data)
         anomaly_value = anomaly_score(events, lat, lon)
         point = _build_point_payload("Bulundugun konum", lat, lon, pred, anomaly_value)
-        return jsonify(
-            {
-                "status": "success",
-                "model_type": MODEL_TYPE,
-                "analysis_window": "past_48h",
-                "model_health": model_health,
-                "warning_capability": get_warning_capability(model_data),
-                "point": point,
-            }
-        )
+        payload = {
+            "status": "success",
+            "model_type": MODEL_TYPE,
+            "analysis_window": "past_48h",
+            "model_health": model_health,
+            "warning_capability": get_warning_capability(model_data),
+            "point": point,
+        }
+        _cache_set(cache_key, payload)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify(
             {
@@ -183,9 +219,13 @@ def forecast_location_v2():
 def recent_earthquakes_v2():
     """Recent earthquakes for mobile clients."""
     try:
+        limit = min(max(1, int(request.args.get("limit", 80) or 80)), 200)
+        cache_key = f"recent-earthquakes:{limit}"
+        cached = _cache_get(cache_key, _RECENT_TTL_SEC)
+        if cached is not None:
+            return jsonify(cached)
         events = load_events()
         sorted_events = sorted(events, key=lambda event: -event["timestamp"])
-        limit = min(max(1, int(request.args.get("limit", 80) or 80)), 200)
         out = []
         for event in sorted_events[:limit]:
             event_key = (
@@ -201,6 +241,8 @@ def recent_earthquakes_v2():
                     "event_key": event_key,
                 }
             )
-        return jsonify({"status": "success", "events": out})
+        payload = {"status": "success", "events": out}
+        _cache_set(cache_key, payload)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({"status": "error", "message": str(exc), "events": []}), 500

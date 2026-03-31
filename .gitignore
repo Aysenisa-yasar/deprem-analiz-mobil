@@ -58,3 +58,15 @@ Thumbs.db
 *.tmp
 *.temp
 
+
+# Deploy assets kept in repo
+!models/forecast_latest.pkl
+!earthquake_history.json
+
+# Local runtime artifacts
+.pydeps/
+.venv-forecast/
+backend-model.err
+backend-model.log
+mobile/expo-start*.err
+mobile/expo-start*.log

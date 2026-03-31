@@ -1,6 +1,8 @@
 # services/data_service.py - Veri fusion (Kandilli + USGS + AFAD + dosya), dedup, cache, kalite filtresi
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
@@ -17,6 +19,14 @@ _EVENTS_CACHE = {
     "timestamp": 0.0,
     "ttl": 300.0,
 }
+
+_API_TIMEOUTS = {
+    "kandilli": float(os.getenv("KANDILLI_TIMEOUT_SEC", "4")),
+    "usgs": float(os.getenv("USGS_TIMEOUT_SEC", "4")),
+    "afad": float(os.getenv("AFAD_TIMEOUT_SEC", "3")),
+}
+
+_LOCAL_FILE_FRESH_SEC = float(os.getenv("LOCAL_EVENT_FILE_FRESH_SEC", "10800"))
 
 
 def _parse_timestamp(eq: dict) -> float:
@@ -177,6 +187,31 @@ def load_events_from_file(filepath: str | None = None) -> list:
     return events
 
 
+def _file_age_seconds(path: str) -> float | None:
+    try:
+        return max(0.0, time.time() - os.path.getmtime(path))
+    except Exception:
+        return None
+
+
+def _load_api_sources_parallel() -> list:
+    sources = [
+        (load_events_from_kandilli, int(_API_TIMEOUTS["kandilli"])),
+        (load_events_from_usgs, int(_API_TIMEOUTS["usgs"])),
+        (load_events_from_afad, int(_API_TIMEOUTS["afad"])),
+    ]
+    collected = []
+    with ThreadPoolExecutor(max_workers=len(sources)) as executor:
+        futures = [executor.submit(loader, timeout=timeout) for loader, timeout in sources]
+        for future in futures:
+            try:
+                batch = future.result() or []
+            except Exception:
+                batch = []
+            collected.extend(batch)
+    return collected
+
+
 def load_events(use_api: bool = True, use_file_fallback: bool = True) -> list:
     now = time.time()
     if (
@@ -185,15 +220,20 @@ def load_events(use_api: bool = True, use_file_fallback: bool = True) -> list:
     ):
         return _EVENTS_CACHE["data"]
 
-    events = []
-    if use_api:
-        events.extend(load_events_from_kandilli())
-        events.extend(load_events_from_usgs())
-        events.extend(load_events_from_afad())
-    if use_file_fallback:
-        events.extend(load_events_from_file())
+    file_events = load_events_from_file() if use_file_fallback else []
+    events = list(file_events)
+
+    file_age = _file_age_seconds(EARTHQUAKE_HISTORY_FILE) if use_file_fallback else None
+    should_refresh_from_api = bool(use_api)
+    if file_events and file_age is not None and file_age <= _LOCAL_FILE_FRESH_SEC:
+        should_refresh_from_api = False
+
+    if should_refresh_from_api:
+        events.extend(_load_api_sources_parallel())
 
     final_events = _dedup_events(_quality_filter(events, min_mag=1.5))
+    if not final_events and file_events:
+        final_events = _dedup_events(_quality_filter(file_events, min_mag=1.5))
     _EVENTS_CACHE["data"] = final_events
     _EVENTS_CACHE["timestamp"] = now
     return final_events
