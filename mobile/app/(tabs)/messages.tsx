@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   AppState,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
+import { useMesh } from '@/context/MeshContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { fetchMessages, sendMessage, type ChatMessage } from '@/lib/api';
 import {
@@ -41,9 +43,15 @@ export default function MessagesScreen() {
   const t = theme[scheme];
   const styles = useMemo(() => makeStyles(t), [t]);
   const insets = useSafeAreaInsets();
-  const composePadBottom = 14 + Math.max(insets.bottom, 8) + TAB_BAR_CLEARANCE;
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const safeBottomInset = Math.max(insets.bottom, 8);
+  const composePadBottom = keyboardVisible
+    ? 12 + safeBottomInset
+    : 14 + safeBottomInset + TAB_BAR_CLEARANCE;
+  const listPadBottom = keyboardVisible ? 24 + 12 + safeBottomInset : 24 + composePadBottom;
 
   const { token, user, apiBase, ready } = useAuth();
+  const { running: meshRunning, connectedPeers } = useMesh();
   const [list, setList] = useState<ChatMessage[]>([]);
   const [toUser, setToUser] = useState('');
   const [body, setBody] = useState('');
@@ -59,6 +67,19 @@ export default function MessagesScreen() {
       setToUser(user.emergency_contact);
     }
   }, [toUser, user?.emergency_contact]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -209,7 +230,7 @@ export default function MessagesScreen() {
     <KeyboardAvoidingView
       style={[styles.flex, { backgroundColor: t.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={88}>
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 74 : 0}>
       <View style={styles.topPad}>
         <Text style={[styles.head, { color: t.text }]}>Sohbet</Text>
         <Text style={[styles.headSub, { color: t.textMuted }]}>
@@ -231,6 +252,9 @@ export default function MessagesScreen() {
             </Text>
             <Text style={[styles.offlineMeta, { color: t.textMuted }]}>
               Kuyruktaki mesaj: {queuedCount}
+            </Text>
+            <Text style={[styles.offlineMeta, { color: t.textMuted }]}>
+              Mesh: {meshRunning ? `aktif, ${connectedPeers.length} cihaz bagli` : 'kapali'}
             </Text>
           </View>
           <Pressable
@@ -259,7 +283,8 @@ export default function MessagesScreen() {
         keyExtractor={(item) => String(item.id)}
         removeClippedSubviews={Platform.OS === 'android'}
         style={styles.list}
-        contentContainerStyle={[styles.listContent, { paddingBottom: 24 + composePadBottom }]}
+        contentContainerStyle={[styles.listContent, { paddingBottom: listPadBottom }]}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         refreshing={refreshing}
         onRefresh={onRefresh}
         renderItem={({ item }) => {

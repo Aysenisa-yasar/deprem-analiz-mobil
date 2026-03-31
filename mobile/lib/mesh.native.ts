@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { PermissionsAndroid, Platform, type Permission } from 'react-native';
 
 export type MeshPeer = {
@@ -30,14 +30,46 @@ type MeshHandlers = {
 };
 
 function currentRuntime(): MeshAvailability['runtime'] {
-  if (Constants.appOwnership === 'expo') return 'expo-go';
-  if (Constants.appOwnership === 'standalone') return 'native';
+  if (
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === 'expo' ||
+    Constants.expoGoConfig
+  ) {
+    return 'expo-go';
+  }
+  if (Constants.executionEnvironment === ExecutionEnvironment.Standalone || Constants.appOwnership === 'standalone') {
+    return 'native';
+  }
   return 'dev-client';
 }
 
 async function loadNearbyModule(): Promise<NearbyModule | null> {
+  if (currentRuntime() === 'expo-go') {
+    return null;
+  }
+
   try {
-    return await import('expo-nearby-connections');
+    const moduleRef = await import('expo-nearby-connections');
+    if (
+      typeof moduleRef.startAdvertise !== 'function' ||
+      typeof moduleRef.startDiscovery !== 'function' ||
+      typeof moduleRef.stopAdvertise !== 'function' ||
+      typeof moduleRef.stopDiscovery !== 'function' ||
+      typeof moduleRef.requestConnection !== 'function' ||
+      typeof moduleRef.acceptConnection !== 'function' ||
+      typeof moduleRef.rejectConnection !== 'function' ||
+      typeof moduleRef.disconnect !== 'function' ||
+      typeof moduleRef.sendText !== 'function' ||
+      typeof moduleRef.onPeerFound !== 'function' ||
+      typeof moduleRef.onPeerLost !== 'function' ||
+      typeof moduleRef.onInvitationReceived !== 'function' ||
+      typeof moduleRef.onConnected !== 'function' ||
+      typeof moduleRef.onDisconnected !== 'function' ||
+      typeof moduleRef.onTextReceived !== 'function'
+    ) {
+      return null;
+    }
+    return moduleRef;
   } catch {
     return null;
   }
@@ -147,7 +179,11 @@ export async function startMeshNode(displayName: string): Promise<{ ok: boolean;
 export async function stopMeshNode(): Promise<void> {
   const moduleRef = await loadNearbyModule();
   if (!moduleRef) return;
-  await Promise.allSettled([moduleRef.stopAdvertise(), moduleRef.stopDiscovery()]);
+  try {
+    await Promise.allSettled([moduleRef.stopAdvertise(), moduleRef.stopDiscovery()]);
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function requestMeshConnection(peerId: string): Promise<{ ok: boolean; message?: string }> {
@@ -186,7 +222,11 @@ export async function rejectMeshConnection(peerId: string): Promise<{ ok: boolea
 export async function disconnectMeshPeer(peerId?: string): Promise<void> {
   const moduleRef = await loadNearbyModule();
   if (!moduleRef) return;
-  await moduleRef.disconnect(peerId);
+  try {
+    await moduleRef.disconnect(peerId);
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function sendMeshText(peerId: string, text: string): Promise<{ ok: boolean; message?: string }> {
@@ -204,22 +244,26 @@ export async function subscribeMeshEvents(handlers: MeshHandlers): Promise<() =>
   const moduleRef = await loadNearbyModule();
   if (!moduleRef) return () => {};
 
-  const unsubscribers = [
-    moduleRef.onPeerFound((peer) => handlers.onPeerFound?.(peer)),
-    moduleRef.onPeerLost((peer) => handlers.onPeerLost?.(peer.peerId)),
-    moduleRef.onInvitationReceived((peer) => handlers.onInvitation?.(peer)),
-    moduleRef.onConnected((peer) => handlers.onConnected?.(peer)),
-    moduleRef.onDisconnected((peer) => handlers.onDisconnected?.(peer.peerId)),
-    moduleRef.onTextReceived((event) => handlers.onText?.(event)),
-  ];
+  try {
+    const unsubscribers = [
+      moduleRef.onPeerFound((peer) => handlers.onPeerFound?.(peer)),
+      moduleRef.onPeerLost((peer) => handlers.onPeerLost?.(peer.peerId)),
+      moduleRef.onInvitationReceived((peer) => handlers.onInvitation?.(peer)),
+      moduleRef.onConnected((peer) => handlers.onConnected?.(peer)),
+      moduleRef.onDisconnected((peer) => handlers.onDisconnected?.(peer.peerId)),
+      moduleRef.onTextReceived((event) => handlers.onText?.(event)),
+    ];
 
-  return () => {
-    unsubscribers.forEach((unsubscribe) => {
-      try {
-        unsubscribe();
-      } catch {
-        /* ignore */
-      }
-    });
-  };
+    return () => {
+      unsubscribers.forEach((unsubscribe) => {
+        try {
+          unsubscribe();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+  } catch {
+    return () => {};
+  }
 }

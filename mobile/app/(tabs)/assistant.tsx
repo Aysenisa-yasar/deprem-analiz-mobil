@@ -63,7 +63,12 @@ export default function AssistantScreen() {
     setInput('');
     setBusy(true);
 
-    const reply = await askChatbot(apiBase, clean, sessionId.current);
+    let reply: Awaited<ReturnType<typeof askChatbot>>;
+    try {
+      reply = await askChatbot(apiBase, clean, sessionId.current);
+    } catch {
+      reply = { ok: false, message: 'Asistan istegi tamamlanamadi.' };
+    }
     setBusy(false);
 
     setMessages((current) => [

@@ -34,8 +34,19 @@
         "BLUETOOTH_ADVERTISE",
         "BLUETOOTH_CONNECT",
         "BLUETOOTH_SCAN",
-        "NEARBY_WIFI_DEVICES"
-      ]
+        "NEARBY_WIFI_DEVICES",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_STATE",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.NEARBY_WIFI_DEVICES"
+      ],
+      "package": "com.aysenisa.depremanaliz"
     },
     "web": {
       "bundler": "metro",
@@ -60,7 +71,11 @@
       ]
     ],
     "extra": {
-      "apiUrl": "https://deprem-analiz-mobil.onrender.com"
+      "apiUrl": "https://deprem-analiz-mobil.onrender.com",
+      "router": {},
+      "eas": {
+        "projectId": "535817ae-9f67-4aa9-b299-2bafee59057d"
+      }
     },
     "experiments": {
       "typedRoutes": true

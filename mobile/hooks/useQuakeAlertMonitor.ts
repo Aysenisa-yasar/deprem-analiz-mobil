@@ -1,30 +1,74 @@
-import * as Location from 'expo-location';
 import { useEffect, useRef } from 'react';
 import { AppState, Platform } from 'react-native';
 
 import type { AlertPreferences } from '@/context/AlertPreferencesContext';
 import { playAlertChime } from '@/lib/alertAudio';
 import { fetchRecentQuakes, haversineKm, sendLocationAlert } from '@/lib/api';
+import { getSafeDeviceLocation } from '@/lib/location';
+import { flushOfflineRelayQueue, queueOfflineRelayPacket } from '@/lib/offlineRelay';
 
 const EMERGENCY_SHARE_MAG_MIN = 5;
 const EMERGENCY_SHARE_DIST_MAX = 150;
 const MAX_EVENT_AGE_SEC = 45 * 60;
-const POLL_MS = 120_000;
+const POLL_MS = 45_000;
+const LOCATION_CACHE_MS = 90_000;
 
 export function useQuakeAlertMonitor(
   apiBase: string,
   token: string | null,
   emergencyContact: string | null | undefined,
-  preferences: AlertPreferences
+  preferences: AlertPreferences,
+  relayEmergencyText?: (text: string, preferredUsername?: string | null) => Promise<{
+    ok: boolean;
+    sentCount: number;
+    route: 'direct' | 'broadcast' | 'none';
+    message?: string;
+  }>
 ) {
   const running = useRef(false);
   const alertedEvents = useRef<Record<string, true>>({});
+  const sharedEvents = useRef<Record<string, true>>({});
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
     if (!preferences.enabled) return;
 
     let timer: ReturnType<typeof setInterval> | undefined;
+    let appStateSub: { remove: () => void } | null = null;
+    let cancelled = false;
+
+    const buildRelayText = (
+      lat: number,
+      lon: number,
+      eq: { mag: number; lat: number; lon: number; timestamp: number; event_key: string },
+      distanceKm: number
+    ) =>
+      [
+        `[AUTO KONUM UYARISI] ${eq.mag.toFixed(1)} buyuklugunde deprem yakinda algilandi.`,
+        `Konumum: ${lat.toFixed(5)}, ${lon.toFixed(5)}`,
+        `Episantr: ${eq.lat.toFixed(5)}, ${eq.lon.toFixed(5)} (~${distanceKm.toFixed(0)} km)`,
+        `Olay: ${eq.event_key}`,
+        'Bu mesaj DepremAnaliz tarafindan otomatik olusturuldu.',
+      ].join('\n');
+
+    let cachedLocation: { lat: number; lon: number; fetchedAt: number } | null = null;
+
+    const getCurrentPosition = async () => {
+      const nowMs = Date.now();
+      if (cachedLocation && nowMs - cachedLocation.fetchedAt <= LOCATION_CACHE_MS) {
+        return cachedLocation;
+      }
+
+      const result = await getSafeDeviceLocation({ requestPermission: false, allowLastKnown: true });
+      if (!result.ok) return null;
+
+      cachedLocation = {
+        lat: result.lat,
+        lon: result.lon,
+        fetchedAt: nowMs,
+      };
+      return cachedLocation;
+    };
 
     const tick = async () => {
       if (AppState.currentState !== 'active') return;
@@ -32,14 +76,14 @@ export function useQuakeAlertMonitor(
       running.current = true;
 
       try {
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (perm.status !== 'granted') return;
+        if (token) {
+          await flushOfflineRelayQueue(apiBase, token);
+        }
 
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Low,
-        });
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
+        const position = await getCurrentPosition();
+        if (!position) return;
+        const lat = position.lat;
+        const lon = position.lon;
         const now = Date.now() / 1000;
 
         const events = await fetchRecentQuakes(apiBase, 80);
@@ -66,14 +110,39 @@ export function useQuakeAlertMonitor(
             continue;
           }
 
-          await sendLocationAlert(base, token, {
+          if (sharedEvents.current[eq.event_key]) {
+            continue;
+          }
+
+          const alertPayload = {
             lat,
             lon,
             magnitude: eq.mag,
             epicenter_lat: eq.lat,
             epicenter_lon: eq.lon,
             event_key: eq.event_key,
-          });
+          };
+          const sendResult = await sendLocationAlert(base, token, alertPayload);
+
+          if (sendResult.ok && (sendResult.sent === true || sendResult.reason === 'already_sent')) {
+            sharedEvents.current[eq.event_key] = true;
+            continue;
+          }
+
+          const relayText = buildRelayText(lat, lon, eq, distanceKm);
+          if (relayEmergencyText) {
+            await relayEmergencyText(relayText, emergencyContact);
+          }
+
+          if (sendResult.retryable) {
+            await queueOfflineRelayPacket({
+              toUsername: emergencyContact,
+              body: relayText,
+              kind: 'location_alert',
+              locationAlertPayload: alertPayload,
+            });
+            sharedEvents.current[eq.event_key] = true;
+          }
         }
       } catch {
         /* network or location failure */
@@ -86,9 +155,17 @@ export function useQuakeAlertMonitor(
     timer = setInterval(() => {
       void tick();
     }, POLL_MS);
+    appStateSub = AppState.addEventListener('change', (state) => {
+      if (cancelled) return;
+      if (state === 'active') {
+        void tick();
+      }
+    });
 
     return () => {
+      cancelled = true;
       if (timer) clearInterval(timer);
+      appStateSub?.remove();
     };
-  }, [apiBase, emergencyContact, preferences, token]);
+  }, [apiBase, emergencyContact, preferences, relayEmergencyText, token]);
 }

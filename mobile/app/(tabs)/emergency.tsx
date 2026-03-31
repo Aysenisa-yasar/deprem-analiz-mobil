@@ -1,6 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { router } from 'expo-router';
-import * as Location from 'expo-location';
 import type { ComponentProps } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -8,9 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
+import { useMesh } from '@/context/MeshContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { startSirenLoop, stopSirenLoop } from '@/lib/alertAudio';
 import { sendMessage } from '@/lib/api';
+import { getSafeDeviceLocation } from '@/lib/location';
 import {
   flushOfflineRelayQueue,
   getOfflineRelayQueue,
@@ -24,6 +25,7 @@ export default function EmergencyScreen() {
   const styles = useMemo(() => makeStyles(t), [t]);
 
   const { apiBase, token, user } = useAuth();
+  const { running: meshRunning, connectedPeers } = useMesh();
   const [sirenOn, setSirenOn] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -83,16 +85,12 @@ export default function EmergencyScreen() {
     setMessage(null);
 
     let locationLine = 'Konum paylasilamadi.';
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status === 'granted') {
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        locationLine = `Konum: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+    const location = await getSafeDeviceLocation({ requestPermission: true, allowLastKnown: true });
+    if (location.ok) {
+      locationLine = `Konum: ${location.lat.toFixed(5)}, ${location.lon.toFixed(5)}`;
+      if (location.source === 'last_known') {
+        locationLine += ' (son bilinen)';
       }
-    } catch {
-      /* location optional */
     }
 
     const body = [
@@ -202,6 +200,9 @@ export default function EmergencyScreen() {
               icin native mesh altyapisi gerekiyor.
             </Text>
             <Text style={[styles.queueMeta, { color: t.textMuted }]}>Kuyruktaki mesaj: {queuedCount}</Text>
+            <Text style={[styles.queueMeta, { color: t.textMuted }]}>
+              Mesh: {meshRunning ? `aktif, ${connectedPeers.length} cihaz bagli` : 'kapali'}
+            </Text>
           </View>
           <Pressable
             onPress={() => router.push('/mesh' as never)}

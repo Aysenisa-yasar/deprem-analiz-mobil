@@ -8,6 +8,7 @@ from services.forecast_service import (
     forecast_city,
     forecast_point,
     get_forecast_model_health,
+    get_warning_capability,
 )
 from services.grid_forecast_service import forecast_grid
 
@@ -63,6 +64,8 @@ def _build_point_payload(name: str, lat: float, lon: float, pred: dict, anomaly_
         "depth_variance": pred.get("depth_variance", 0.0),
         "nearest_fault_segment": pred.get("nearest_fault_segment", "unknown"),
         "model_health": pred.get("model_health", {}),
+        "warning_capability": pred.get("warning_capability", {}),
+        "alert_advisory": pred.get("alert_advisory", {}),
     }
 
 
@@ -83,11 +86,20 @@ def forecast_map_v2():
                 "model_type": MODEL_TYPE,
                 "analysis_window": "past_48h",
                 "model_health": model_health,
+                "warning_capability": get_warning_capability(model_data),
                 "points": points,
             }
         )
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc), "points": []}), 500
+        return jsonify(
+            {
+                "status": "error",
+                "message": str(exc),
+                "points": [],
+                "model_health": {},
+                "warning_capability": {},
+            }
+        ), 500
 
 
 @forecast_bp.route("/api/v2/forecast-grid", methods=["GET"])
@@ -116,10 +128,18 @@ def forecast_model_status_v2():
                 "status": "success",
                 "model_type": MODEL_TYPE,
                 "model_health": get_forecast_model_health(model_data),
+                "warning_capability": get_warning_capability(model_data),
             }
         )
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc), "model_health": {}}), 500
+        return jsonify(
+            {
+                "status": "error",
+                "message": str(exc),
+                "model_health": {},
+                "warning_capability": {},
+            }
+        ), 500
 
 
 @forecast_bp.route("/api/v2/forecast-location", methods=["GET"])
@@ -133,6 +153,7 @@ def forecast_location_v2():
     try:
         events = load_events()
         model_data = load_model()
+        model_health = get_forecast_model_health(model_data)
         pred = forecast_point(events, lat, lon, explain=True, model_data=model_data)
         anomaly_value = anomaly_score(events, lat, lon)
         point = _build_point_payload("Bulundugun konum", lat, lon, pred, anomaly_value)
@@ -141,12 +162,21 @@ def forecast_location_v2():
                 "status": "success",
                 "model_type": MODEL_TYPE,
                 "analysis_window": "past_48h",
-                "model_health": get_forecast_model_health(model_data),
+                "model_health": model_health,
+                "warning_capability": get_warning_capability(model_data),
                 "point": point,
             }
         )
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc), "point": {}}), 500
+        return jsonify(
+            {
+                "status": "error",
+                "message": str(exc),
+                "point": {},
+                "model_health": {},
+                "warning_capability": {},
+            }
+        ), 500
 
 
 @forecast_bp.route("/api/v2/recent-earthquakes", methods=["GET"])

@@ -1,7 +1,6 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,28 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/components/useColorScheme';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
-import {
-  acceptMeshConnection,
-  disconnectMeshPeer,
-  getMeshAvailability,
-  type MeshAvailability,
-  type MeshPeer,
-  requestMeshConnection,
-  rejectMeshConnection,
-  sendMeshText,
-  startMeshNode,
-  stopMeshNode,
-  subscribeMeshEvents,
-} from '@/lib/mesh';
-
-type TranscriptMessage = {
-  id: string;
-  peerId?: string;
-  peerName?: string;
-  text: string;
-  direction: 'incoming' | 'outgoing' | 'system';
-  createdAt: number;
-};
+import { useMesh } from '@/context/MeshContext';
 
 function formatClock(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('tr-TR', {
@@ -46,243 +24,42 @@ function formatClock(timestamp: number): string {
   });
 }
 
-function uniqueByPeer(peers: MeshPeer[]): MeshPeer[] {
-  const map = new Map<string, MeshPeer>();
-  for (const peer of peers) map.set(peer.peerId, peer);
-  return [...map.values()];
-}
-
 export default function MeshScreen() {
   const colorScheme = useColorScheme();
   const scheme = colorScheme === 'dark' ? 'dark' : 'light';
   const t = theme[scheme];
   const styles = useMemo(() => makeStyles(t), [t]);
   const { user } = useAuth();
-
-  const [availability, setAvailability] = useState<MeshAvailability | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [myPeerId, setMyPeerId] = useState<string | null>(null);
-  const [deviceName, setDeviceName] = useState(() =>
-    user?.username?.trim()
-      ? `DepremAnaliz-${user.username}`
-      : `DepremAnaliz-${Math.random().toString(36).slice(2, 6)}`
-  );
-  const [discoveredPeers, setDiscoveredPeers] = useState<MeshPeer[]>([]);
-  const [connectedPeers, setConnectedPeers] = useState<MeshPeer[]>([]);
-  const [invitations, setInvitations] = useState<MeshPeer[]>([]);
-  const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
+  const {
+    availability,
+    busy,
+    running,
+    myPeerId,
+    deviceName,
+    discoveredPeers,
+    connectedPeers,
+    invitations,
+    selectedPeerId,
+    statusMessage,
+    transcript,
+    setDeviceName,
+    setSelectedPeerId,
+    startNode,
+    stopNode,
+    askConnect,
+    acceptInvite,
+    rejectInvite,
+    sendTextToSelected,
+    sendSos,
+    disconnectPeer,
+  } = useMesh();
   const [composeText, setComposeText] = useState('');
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
-  const connectedPeersRef = useRef<MeshPeer[]>([]);
 
-  useEffect(() => {
-    let mounted = true;
-    void getMeshAvailability().then((result) => {
-      if (mounted) setAvailability(result);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    connectedPeersRef.current = connectedPeers;
-  }, [connectedPeers]);
-
-  useEffect(() => {
-    let mounted = true;
-    let unsubscribe = () => {};
-
-    void subscribeMeshEvents({
-      onPeerFound: (peer) => {
-        if (!mounted) return;
-        setDiscoveredPeers((current) => uniqueByPeer([...current, peer]));
-      },
-      onPeerLost: (peerId) => {
-        if (!mounted) return;
-        setDiscoveredPeers((current) => current.filter((peer) => peer.peerId !== peerId));
-      },
-      onInvitation: (peer) => {
-        if (!mounted) return;
-        setInvitations((current) => uniqueByPeer([...current, peer]));
-        setTranscript((current) => [
-          ...current,
-          {
-            id: `sys_invite_${peer.peerId}_${Date.now()}`,
-            direction: 'system',
-            text: `${peer.name} senden baglanti izni istedi.`,
-            peerId: peer.peerId,
-            peerName: peer.name,
-            createdAt: Date.now(),
-          },
-        ]);
-      },
-      onConnected: (peer) => {
-        if (!mounted) return;
-        setConnectedPeers((current) => uniqueByPeer([...current, peer]));
-        setInvitations((current) => current.filter((item) => item.peerId !== peer.peerId));
-        setSelectedPeerId((current) => current ?? peer.peerId);
-        setTranscript((current) => [
-          ...current,
-          {
-            id: `sys_conn_${peer.peerId}_${Date.now()}`,
-            direction: 'system',
-            text: `${peer.name} ile yakin baglanti kuruldu.`,
-            peerId: peer.peerId,
-            peerName: peer.name,
-            createdAt: Date.now(),
-          },
-        ]);
-      },
-      onDisconnected: (peerId) => {
-        if (!mounted) return;
-        setConnectedPeers((current) => current.filter((peer) => peer.peerId !== peerId));
-        setSelectedPeerId((current) => (current === peerId ? null : current));
-        setTranscript((current) => [
-          ...current,
-          {
-            id: `sys_disc_${peerId}_${Date.now()}`,
-            direction: 'system',
-            text: `${peerId.slice(0, 6)} baglantisi sonlandi.`,
-            peerId,
-            createdAt: Date.now(),
-          },
-        ]);
-      },
-      onText: (event) => {
-        if (!mounted) return;
-        const peerName = connectedPeersRef.current.find((peer) => peer.peerId === event.peerId)?.name;
-        setTranscript((current) => [
-          ...current,
-          {
-            id: `msg_in_${event.peerId}_${Date.now()}`,
-            direction: 'incoming',
-            text: event.text,
-            peerId: event.peerId,
-            peerName,
-            createdAt: Date.now(),
-          },
-        ]);
-      },
-    }).then((cleanup) => {
-      unsubscribe = cleanup;
-    });
-
-    return () => {
-      mounted = false;
-      unsubscribe();
-      void stopMeshNode();
-    };
-  }, []);
-
-  const startNode = async () => {
-    setBusy(true);
-    setStatusMessage(null);
-    const result = await startMeshNode(deviceName.trim() || 'DepremAnaliz');
-    setBusy(false);
-
-    if (!result.ok) {
-      setStatusMessage(result.message || 'Yakin ag baslatilamadi.');
-      return;
+  const sendNow = async () => {
+    const result = await sendTextToSelected(composeText);
+    if (result.ok) {
+      setComposeText('');
     }
-
-    setRunning(true);
-    setMyPeerId(result.peerId ?? null);
-    setStatusMessage('Yakin ag aktif. Cevredeki cihazlar taraniyor.');
-  };
-
-  const stopNode = async () => {
-    setBusy(true);
-    await stopMeshNode();
-    setBusy(false);
-    setRunning(false);
-    setDiscoveredPeers([]);
-    setConnectedPeers([]);
-    setInvitations([]);
-    setSelectedPeerId(null);
-    setStatusMessage('Yakin ag durduruldu.');
-  };
-
-  const askConnect = async (peer: MeshPeer) => {
-    const result = await requestMeshConnection(peer.peerId);
-    setStatusMessage(
-      result.ok ? `${peer.name} icin baglanti istegi gonderildi.` : result.message || 'Baglanti istegi gonderilemedi.'
-    );
-  };
-
-  const acceptInvite = async (peer: MeshPeer) => {
-    const result = await acceptMeshConnection(peer.peerId);
-    setStatusMessage(result.ok ? `${peer.name} baglantisi kabul edildi.` : result.message || 'Baglanti kabul edilemedi.');
-  };
-
-  const rejectInvite = async (peer: MeshPeer) => {
-    const result = await rejectMeshConnection(peer.peerId);
-    setInvitations((current) => current.filter((item) => item.peerId !== peer.peerId));
-    setStatusMessage(result.ok ? `${peer.name} istegi reddedildi.` : result.message || 'Istek reddedilemedi.');
-  };
-
-  const sendTextToPeer = async (text: string) => {
-    const cleaned = text.trim();
-    if (!selectedPeerId || !cleaned) {
-      setStatusMessage('Mesaj ve hedef cihaz secilmeli.');
-      return;
-    }
-
-    const result = await sendMeshText(selectedPeerId, cleaned);
-    if (!result.ok) {
-      setStatusMessage(result.message || 'Yakin mesaji gonderilemedi.');
-      return;
-    }
-
-    const peerName = connectedPeers.find((peer) => peer.peerId === selectedPeerId)?.name;
-    setTranscript((current) => [
-      ...current,
-      {
-        id: `msg_out_${selectedPeerId}_${Date.now()}`,
-        direction: 'outgoing',
-        text: cleaned,
-        peerId: selectedPeerId,
-        peerName,
-        createdAt: Date.now(),
-      },
-    ]);
-    setComposeText('');
-    setStatusMessage('Yakin cihaz mesaji gonderildi.');
-  };
-
-  const sendSos = async () => {
-    if (!connectedPeers.length) {
-      setStatusMessage('SOS icin bagli en az bir cihaz gerekli.');
-      return;
-    }
-
-    const sosText = user?.username
-      ? `[SOS] ${user.username} yardim istiyor. Bu mesaj internetsiz yakin ag uzerinden gonderildi.`
-      : '[SOS] Yardim istiyorum. Bu mesaj internetsiz yakin ag uzerinden gonderildi.';
-
-    let sentCount = 0;
-    for (const peer of connectedPeers) {
-      const result = await sendMeshText(peer.peerId, sosText);
-      if (result.ok) sentCount += 1;
-    }
-
-    setTranscript((current) => [
-      ...current,
-      {
-        id: `sos_${Date.now()}`,
-        direction: 'system',
-        text: sentCount > 0 ? `SOS ${sentCount} cihaza gonderildi.` : 'SOS gonderilemedi.',
-        createdAt: Date.now(),
-      },
-    ]);
-    setStatusMessage(sentCount > 0 ? `SOS ${sentCount} cihaza gitti.` : 'SOS gonderilemedi.');
-  };
-
-  const disconnectPeer = async (peer: MeshPeer) => {
-    await disconnectMeshPeer(peer.peerId);
-    Alert.alert('Baglanti kapatildi', `${peer.name} ile yakin baglanti sonlandirildi.`);
   };
 
   return (
@@ -294,13 +71,14 @@ export default function MeshScreen() {
           <View style={[styles.hero, { backgroundColor: t.brandHeader }]}>
             <View style={styles.heroRow}>
               <FontAwesome name="wifi" size={18} color={t.brandOnHeader} />
-              <Text style={[styles.heroBadge, { color: t.brandOnHeader }]}>Yakın Ağ / Mesh</Text>
+              <Text style={[styles.heroBadge, { color: t.brandOnHeader }]}>Yakin Ag / Mesh</Text>
             </View>
             <Text style={[styles.heroTitle, { color: t.brandOnHeader }]}>
-              Internet ve GSM olmadan, yakin cihazlara dogrudan mesaj gonder
+              Internet ve GSM yokken yakin cihazlarla canli baglanti
             </Text>
             <Text style={[styles.heroSub, { color: t.brandOnHeader }]}>
-              Android development build ile Nearby Connections, iPhone tarafinda Multipeer altyapisi kullanilir.
+              Bu oturum artik uygulama genelinde yasiyor. Mesh ekranindan ayrilsan bile sen
+              durdurana kadar aktif kalir.
             </Text>
           </View>
 
@@ -315,7 +93,9 @@ export default function MeshScreen() {
               Runtime: {availability?.runtime || 'bilinmiyor'}
             </Text>
             {availability?.playServicesAvailable === false ? (
-              <Text style={[styles.warn, { color: t.warn }]}>Google Play Services eksik veya uygun degil.</Text>
+              <Text style={[styles.warn, { color: t.warn }]}>
+                Google Play Services eksik veya uygun degil.
+              </Text>
             ) : null}
 
             <TextInput
@@ -359,7 +139,14 @@ export default function MeshScreen() {
 
             <View style={styles.pillRow}>
               <View style={[styles.pill, { backgroundColor: t.surfaceMuted }]}>
-                <Text style={[styles.pillText, { color: t.text }]}>{running ? 'Aktif tarama acik' : 'Agi kapali'}</Text>
+                <Text style={[styles.pillText, { color: t.text }]}>
+                  {running ? 'Mesh aktif' : 'Mesh kapali'}
+                </Text>
+              </View>
+              <View style={[styles.pill, { backgroundColor: t.surfaceMuted }]}>
+                <Text style={[styles.pillText, { color: t.text }]}>
+                  Bagli cihaz: {connectedPeers.length}
+                </Text>
               </View>
               {myPeerId ? (
                 <View style={[styles.pill, { backgroundColor: t.surfaceMuted }]}>
@@ -382,6 +169,13 @@ export default function MeshScreen() {
                 Bagli cihazlara SOS gonder
               </Text>
             </Pressable>
+
+            {user?.emergency_contact ? (
+              <Text style={[styles.note, { color: t.textSecondary }]}>
+                Otomatik yakin-deprem konum uyarisi ag yoksa once secili kisiyi mesh adinda arar,
+                bulamazsa bagli yakin cihazlara relay yayini yapar.
+              </Text>
+            ) : null}
           </View>
 
           <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
@@ -459,7 +253,9 @@ export default function MeshScreen() {
                           styles.peerChip,
                           { backgroundColor: selected ? t.accent : t.surfaceMuted },
                         ]}>
-                        <Text style={[styles.peerChipText, { color: selected ? '#fff' : t.text }]}>{peer.name}</Text>
+                        <Text style={[styles.peerChipText, { color: selected ? '#fff' : t.text }]}>
+                          {peer.name}
+                        </Text>
                       </Pressable>
                     );
                   })}
@@ -502,7 +298,7 @@ export default function MeshScreen() {
               onChangeText={setComposeText}
             />
             <Pressable
-              onPress={() => void sendTextToPeer(composeText)}
+              onPress={() => void sendNow()}
               disabled={!selectedPeerId || !composeText.trim()}
               style={({ pressed }) => [
                 styles.primaryBtn,
@@ -547,7 +343,7 @@ export default function MeshScreen() {
                         styles.chatMeta,
                         { color: outgoing ? 'rgba(255,255,255,0.86)' : t.textMuted },
                       ]}>
-                      {item.peerName || item.peerId?.slice(0, 6) || 'sistem'} · {formatClock(item.createdAt)}
+                      {item.peerName || item.peerId?.slice(0, 6) || 'sistem'} - {formatClock(item.createdAt)}
                     </Text>
                     <Text style={[styles.chatBody, { color: outgoing ? '#fff' : t.text }]}>{item.text}</Text>
                   </View>
@@ -586,6 +382,7 @@ function makeStyles(t: ThemeTokens) {
     sectionBody: { fontSize: 13, lineHeight: 19 },
     meta: { fontSize: 12, fontWeight: '700' },
     warn: { fontSize: 13, fontWeight: '700' },
+    note: { fontSize: 12, lineHeight: 18 },
     input: {
       borderWidth: 1,
       borderRadius: 14,

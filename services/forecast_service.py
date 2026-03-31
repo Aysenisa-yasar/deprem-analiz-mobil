@@ -1,10 +1,204 @@
+from functools import lru_cache
+
+from forecast.backtest import rolling_backtest
 from forecast.predictor import build_model_health, load_model, predict_with_model_data
+from services.data_service import load_events
 
 
 def _optional_float(value):
     if value is None:
         return None
     return float(value)
+
+
+def _warning_capability(model_health: dict | None) -> dict:
+    ready = bool(model_health and model_health.get("available"))
+    return {
+        "mode": "ml_risk_advisory",
+        "official_sensor_early_warning": False,
+        "seconds_before_alarm_supported": False,
+        "siren_alarm_supported": False,
+        "special_notifications_ready": ready,
+        "summary": (
+            "Bu surum ML tabanli bolgesel risk uyarisi uretiyor. Saniyeler once calan resmi "
+            "sismik erken uyari altyapisi bu katmanda yok."
+        ),
+    }
+
+
+def _backtest_needs_refresh(model_data: dict | None) -> bool:
+    if not model_data or "model" not in model_data:
+        return False
+    backtest = model_data.get("backtest") or {}
+    return backtest.get("recall") is None or backtest.get("precision") is None
+
+
+@lru_cache(maxsize=4)
+def _runtime_backtest_for_model(trained_at: str | None) -> dict:
+    if not trained_at:
+        return {}
+
+    model_data = load_model()
+    if not model_data or model_data.get("trained_at") != trained_at:
+        return {}
+
+    events = load_events()
+    return rolling_backtest(
+        lambda history, lat, lon: predict_with_model_data(
+            model_data,
+            history,
+            lat,
+            lon,
+            explain=False,
+        ),
+        events,
+    )
+
+
+def _advisory_actions(level: str) -> list[str]:
+    if level == "high_alert":
+        return [
+            "Konum izinleri, acil kisi ve ozel uyarilar aktif olsun.",
+            "Guvenli cikis plani ile toplanma noktasini hazir tut.",
+            "Resmi bildirimleri ve son depremleri yakindan izle.",
+        ]
+    if level == "prepare":
+        return [
+            "Telefon sesi, kritik bildirimler ve acil kisi ayarlarini kontrol et.",
+            "Acil cantasi, powerbank ve konum paylasimini hazir tut.",
+            "Bulundugun binadaki guvenli alanlari gozden gecir.",
+        ]
+    if level == "watch":
+        return [
+            "Uygulamayi arka planda acik tut ve resmi kaynaklari izle.",
+            "Acil kisilerini guncel tut.",
+            "Yerel risk artarsa bildirim esigini dusur.",
+        ]
+    return [
+        "Rutin izleme yeterli, resmi bildirimleri kapatma.",
+        "Konum izni verirsen daha kisisel risk karti uretilir.",
+        "Acil kisi ve mesajlasma bilgilerini simdiden kaydet.",
+    ]
+
+
+def _build_alert_advisory(pred: dict) -> dict:
+    model_health = pred.get("model_health") or {}
+    quality_level = str(model_health.get("quality_level") or "experimental")
+    quality_score = float(model_health.get("quality_score") or 0.0)
+
+    probability = float(pred.get("probability", 0.0) or 0.0)
+    m5_probability = float(pred.get("m5_72h_probability", 0.0) or 0.0)
+    locality_score = float(pred.get("locality_score", 0.0) or 0.0)
+    signal_event_count = int(pred.get("signal_event_count", 0) or 0)
+    fault_distance = float(pred.get("fault_distance", 999.0) or 999.0)
+    time_window = pred.get("next_event_time_window")
+    time_prediction = _optional_float(pred.get("time_to_next_event_hours_prediction"))
+
+    reasons = []
+    reason_codes = []
+
+    if probability >= 0.58:
+        reasons.append("24 saatlik M4+ olasiligi belirgin yukselmis durumda.")
+        reason_codes.append("probability_elevated")
+    elif probability >= 0.35:
+        reasons.append("24 saatlik risk taban seviyenin uzerinde.")
+        reason_codes.append("probability_watch")
+
+    if m5_probability >= 0.25:
+        reasons.append("72 saatlik M5+ senaryosu da kayda deger.")
+        reason_codes.append("m5_window_elevated")
+
+    if locality_score >= 0.55:
+        reasons.append("Konum, yerel sinyaller ve fay yakinligi nedeniyle hassas.")
+        reason_codes.append("locality_high")
+
+    if signal_event_count >= 12:
+        reasons.append("Yakin bolgede yogun sinyal eventi birikmis.")
+        reason_codes.append("signal_density_high")
+    elif signal_event_count >= 6:
+        reasons.append("Yakin bolgede izlenmeye deger sayida sinyal eventi var.")
+        reason_codes.append("signal_density_watch")
+
+    if fault_distance <= 25:
+        reasons.append("Konum aktif faylara gorece yakin.")
+        reason_codes.append("fault_nearby")
+
+    if time_window in {"0-24h", "24-72h"}:
+        reasons.append(f"Yardimci model sonraki olayi {time_window} penceresinde bekliyor.")
+        reason_codes.append("time_window_near")
+    elif time_prediction is not None and time_prediction <= 24.0:
+        reasons.append("Yardimci model sonraki olayi 24 saat icinde bekliyor.")
+        reason_codes.append("time_window_near")
+
+    level = "info"
+    label = "Bilgi"
+    notification_tier = "silent"
+    notify_recommended = False
+    critical_notification_recommended = False
+
+    if quality_level in {"high", "medium"}:
+        if (
+            quality_level == "high"
+            and probability >= 0.72
+            and m5_probability >= 0.28
+            and locality_score >= 0.55
+            and signal_event_count >= 12
+        ):
+            level = "high_alert"
+            label = "Kritik hazirlik"
+            notification_tier = "high_priority"
+            notify_recommended = True
+            critical_notification_recommended = True
+        elif probability >= 0.56 and locality_score >= 0.45 and signal_event_count >= 8:
+            level = "prepare"
+            label = "Hazirlik"
+            notification_tier = "standard"
+            notify_recommended = True
+        elif probability >= 0.35 or m5_probability >= 0.18 or signal_event_count >= 6:
+            level = "watch"
+            label = "Izleme"
+            notification_tier = "standard"
+    else:
+        if probability >= 0.40 or signal_event_count >= 8:
+            level = "watch"
+            label = "Izleme"
+            notification_tier = "standard"
+
+    if not reasons:
+        reasons.append("Bu bolge icin anlamli bir yukselis simdilik gorunmuyor.")
+        reason_codes.append("baseline")
+
+    summary = {
+        "high_alert": "ML risk sinyali belirgin yukselmis. Bu bir resmi saniyeler-once alarmi degil, yuksek oncelikli hazirlik uyarisi.",
+        "prepare": "Risk sinyali normalin uzerinde. Ozel bildirim ve hazirlik akisi aktif tutulmali.",
+        "watch": "Bolgesel risk izlenmeli. Resmi kaynaklarla birlikte takip edilmeli.",
+        "info": "Su anda belirgin bir yukselis yok. Rutin izleme yeterli.",
+    }[level]
+
+    limitations = [
+        "Bu katman ML tabanli risk artisi uretir; resmi sismik erken uyari yerine gecmez.",
+        "Saniyeler once siren caldirmak icin resmi sensornet/EEW entegrasyonu gerekir.",
+    ]
+    if quality_level == "experimental":
+        limitations.append("Model kalitesi bu bolge icin halen deneysel seviyede.")
+
+    return {
+        "level": level,
+        "label": label,
+        "summary": summary,
+        "notify_recommended": notify_recommended,
+        "critical_notification_recommended": critical_notification_recommended,
+        "notification_tier": notification_tier,
+        "official_sensor_early_warning": False,
+        "seconds_before_alarm_supported": False,
+        "reason_codes": reason_codes,
+        "reasons": reasons[:4],
+        "actions": _advisory_actions(level),
+        "limitations": limitations,
+        "quality_level": quality_level,
+        "quality_score": round(quality_score, 4),
+        "next_event_time_window": time_window,
+    }
 
 
 def forecast_point(
@@ -23,6 +217,7 @@ def forecast_point(
     )
     prob = pred["probability"]
     risk = min(10.0, max(0.0, prob * 10.0))
+    advisory = _build_alert_advisory(pred)
     return {
         "probability": float(prob),
         "ml_probability": float(pred.get("ml_probability", prob)),
@@ -41,6 +236,8 @@ def forecast_point(
         "locality_score": float(pred.get("locality_score", 0.0)),
         "risk_score": round(risk, 2),
         "model_health": pred.get("model_health", {}),
+        "warning_capability": _warning_capability(pred.get("model_health")),
+        "alert_advisory": advisory,
         "top_features": pred.get("top_features", []),
         "features": pred.get("features", {}),
         "ensemble_weights": pred.get("ensemble_weights", {}),
@@ -74,4 +271,13 @@ def forecast_city(
 
 
 def get_forecast_model_health(model_data: dict | None = None) -> dict:
-    return build_model_health(model_data if model_data is not None else load_model())
+    resolved_model = model_data if model_data is not None else load_model()
+    if _backtest_needs_refresh(resolved_model):
+        refreshed_backtest = _runtime_backtest_for_model(resolved_model.get("trained_at"))
+        if refreshed_backtest:
+            resolved_model["backtest"] = refreshed_backtest
+    return build_model_health(resolved_model)
+
+
+def get_warning_capability(model_data: dict | None = None) -> dict:
+    return _warning_capability(get_forecast_model_health(model_data))

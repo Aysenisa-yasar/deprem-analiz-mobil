@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 
 import type { ThemeTokens } from '@/constants/theme';
 import type { QuakeEvent } from '@/lib/api';
@@ -20,21 +21,6 @@ const TR_REGION = {
 
 export function QuakeMap({ events, scheme, t }: Props) {
   const markers = useMemo(() => events.slice(0, 80), [events]);
-
-  if (Platform.OS === 'web') {
-    return (
-      <View style={[styles.webFall, { backgroundColor: t.surfaceMuted }]}>
-        <Text style={[styles.webFallTitle, { color: t.text }]}>Harita</Text>
-        <Text style={{ color: t.textSecondary, textAlign: 'center', paddingHorizontal: 24 }}>
-          Harita görünümü iOS ve Android’de kullanılabilir. Web’de liste kullanın.
-        </Text>
-      </View>
-    );
-  }
-
-  const Maps = require('react-native-maps') as typeof import('react-native-maps');
-  const MapView = Maps.default;
-  const Marker = Maps.Marker;
 
   return (
     <View style={styles.wrap}>
@@ -76,6 +62,4 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,0,0,0.12)',
   },
   markerTxt: { fontSize: 12, fontWeight: '800' },
-  webFall: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 220 },
-  webFallTitle: { fontSize: 17, fontWeight: '700', marginBottom: 8 },
 });

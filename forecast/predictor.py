@@ -118,7 +118,20 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
     pr_auc = _optional_float(metrics.get("pr_auc_mean"), min_value=0.0, max_value=1.0)
     brier = _optional_float(metrics.get("brier_mean"), min_value=0.0, max_value=1.0)
     hit_rate = _optional_float(backtest.get("hit_rate"), min_value=0.0, max_value=1.0)
+    accuracy = _optional_float(backtest.get("accuracy"), min_value=0.0, max_value=1.0)
+    precision = _optional_float(backtest.get("precision"), min_value=0.0, max_value=1.0)
+    recall = _optional_float(backtest.get("recall"), min_value=0.0, max_value=1.0)
+    f1 = _optional_float(backtest.get("f1"), min_value=0.0, max_value=1.0)
+    balanced_accuracy = _optional_float(backtest.get("balanced_accuracy"), min_value=0.0, max_value=1.0)
+    top_decile_precision = _optional_float(backtest.get("top_decile_precision"), min_value=0.0, max_value=1.0)
+    top_decile_recall = _optional_float(backtest.get("top_decile_recall"), min_value=0.0, max_value=1.0)
     positive_rate = _optional_float(backtest.get("positive_rate"), min_value=0.0, max_value=1.0)
+    hit_rate_definition = backtest.get("hit_rate_definition") or "legacy_accuracy"
+    uses_legacy_backtest = False
+
+    if recall is None and hit_rate is not None:
+        uses_legacy_backtest = True
+        accuracy = accuracy if accuracy is not None else hit_rate
 
     component_scores = []
     if roc_auc is not None:
@@ -128,9 +141,22 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
         component_scores.append(_clamp01((pr_auc - positive_rate) / lift_denom))
     if brier is not None:
         component_scores.append(_clamp01(1.0 - (brier / 0.35)))
-    if hit_rate is not None and positive_rate is not None:
+    if recall is not None:
+        component_scores.append(_clamp01(recall / 0.75))
+    if precision is not None:
+        component_scores.append(_clamp01(precision / 0.75))
+    if f1 is not None:
+        component_scores.append(_clamp01(f1 / 0.70))
+    if balanced_accuracy is not None:
+        component_scores.append(_clamp01((balanced_accuracy - 0.5) / 0.3))
+    if top_decile_precision is not None and positive_rate is not None:
+        lift_denom = max(0.05, 1.0 - positive_rate)
+        component_scores.append(_clamp01((top_decile_precision - positive_rate) / lift_denom))
+    if top_decile_recall is not None:
+        component_scores.append(_clamp01(top_decile_recall / 0.70))
+    if uses_legacy_backtest and accuracy is not None and positive_rate is not None:
         gain_denom = max(0.05, 1.0 - positive_rate)
-        component_scores.append(_clamp01((hit_rate - positive_rate) / gain_denom))
+        component_scores.append(0.55 * _clamp01((accuracy - positive_rate) / gain_denom))
 
     base_score = _mean_score(component_scores)
     if signal_event_count is None:
@@ -138,6 +164,9 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
     else:
         signal_score = _clamp01(float(signal_event_count) / 24.0)
         quality_score = float(0.72 * base_score + 0.28 * signal_score)
+
+    if uses_legacy_backtest:
+        quality_score *= 0.92
 
     level = _quality_level(quality_score)
     signal_note = ""
@@ -148,6 +177,12 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
             level = "experimental"
         signal_note = f" Bu bolgede sinyal event sayisi dusuk ({int(signal_event_count)})."
 
+    metrics_note = ""
+    if uses_legacy_backtest:
+        if level == "high":
+            level = "medium"
+        metrics_note = " Backtest kaydinda yeni precision/recall metrikleri yok; kalite yorumu daha temkinli tutuldu."
+
     if level == "high":
         summary = "Model kalibrasyon ve backtest metriklerinde guclu gorunuyor; yine de sonuc kesin zaman tahmini degil, kisa vadeli bolgesel olasilik sinyalidir."
     elif level == "medium":
@@ -156,6 +191,7 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
         summary = "Model halen deneysel seviyede; cikti yalnizca destekleyici risk gostergesi olarak kullanilmali."
 
     summary += signal_note
+    summary += metrics_note
 
     return {
         "available": True,
@@ -175,10 +211,20 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
         },
         "backtest": {
             "hit_rate": hit_rate,
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "balanced_accuracy": balanced_accuracy,
             "positive_rate": positive_rate,
+            "alarm_rate": _optional_float(backtest.get("alarm_rate"), min_value=0.0, max_value=1.0),
+            "top_decile_precision": top_decile_precision,
+            "top_decile_recall": top_decile_recall,
             "samples": int(backtest.get("samples", 0) or 0),
             "threshold": _optional_float(backtest.get("threshold"), min_value=0.0, max_value=1.0),
             "mean_prob": _optional_float(backtest.get("mean_prob"), min_value=0.0, max_value=1.0),
+            "hit_rate_definition": hit_rate_definition,
+            "legacy": bool(uses_legacy_backtest),
         },
         "signal_event_count": int(signal_event_count or 0),
     }

@@ -1,6 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,6 +19,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { fetchRecentQuakes, haversineKm, type QuakeEvent } from '@/lib/api';
+import { getSafeDeviceLocation } from '@/lib/location';
 import {
   countBuckets,
   filterQuakes,
@@ -86,16 +86,8 @@ export default function DepremlerScreen() {
     if (!ready) return;
     let alive = true;
     (async () => {
-      const perm = await Location.getForegroundPermissionsAsync();
-      if (perm.status !== 'granted') return;
-      try {
-        const p = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Low,
-        });
-        if (alive) setUserLoc({ lat: p.coords.latitude, lon: p.coords.longitude });
-      } catch {
-        /* pil / izin */
-      }
+      const result = await getSafeDeviceLocation({ requestPermission: false, accuracy: 1 });
+      if (alive && result.ok) setUserLoc({ lat: result.lat, lon: result.lon });
     })();
     return () => {
       alive = false;

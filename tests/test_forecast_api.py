@@ -22,8 +22,12 @@ def test_forecast_map_v2_json(client):
     assert "status" in data
     assert "points" in data
     assert "model_health" in data
+    assert "warning_capability" in data
     if data.get("status") == "success":
         assert len(data.get("points", [])) >= 81
+        point = data.get("points", [{}])[0]
+        assert "alert_advisory" in point
+        assert "warning_capability" in point
 
 
 def test_forecast_model_status_v2_returns_health(client):
@@ -32,6 +36,7 @@ def test_forecast_model_status_v2_returns_health(client):
     data = r.get_json()
     assert data is not None
     assert "model_health" in data
+    assert "warning_capability" in data
 
 
 def test_forecast_location_v2_requires_coordinates(client):

@@ -11,6 +11,16 @@ export { isSupabaseConfigured };
 
 export type AuthTargetKind = 'email' | 'phone' | 'unknown';
 
+function toSupabaseMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    if (/network request failed/i.test(error.message)) {
+      return 'Supabase ag istegi basarisiz oldu. Internet baglantisini kontrol edip tekrar dene.';
+    }
+    return error.message.trim();
+  }
+  return fallback;
+}
+
 export function detectAuthTargetKind(value: string): AuthTargetKind {
   const trimmed = value.trim();
   if (!trimmed) return 'unknown';
@@ -77,11 +87,15 @@ export async function hydrateSupabaseSessionFromUrl(url: string): Promise<boolea
     return false;
   }
 
-  const { error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-  return !error;
+  try {
+    const { error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    return !error;
+  } catch {
+    return false;
+  }
 }
 
 export async function requestSupabaseOtp(target: string): Promise<{ ok: boolean; message?: string }> {
@@ -90,25 +104,29 @@ export async function requestSupabaseOtp(target: string): Promise<{ ok: boolean;
   }
 
   const kind = detectAuthTargetKind(target);
-  if (kind === 'email') {
-    const { error } = await supabase.auth.signInWithOtp({
-      email: target.trim(),
-      options: { emailRedirectTo: getSupabaseRedirectUrl(), shouldCreateUser: true },
-    });
-    if (error) return { ok: false, message: error.message };
-    return {
-      ok: true,
-      message: 'E-posta linki veya kodu gonderildi. Baglantiya dokunursan uygulama otomatik giris yapar.',
-    };
-  }
+  try {
+    if (kind === 'email') {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: target.trim(),
+        options: { emailRedirectTo: getSupabaseRedirectUrl(), shouldCreateUser: true },
+      });
+      if (error) return { ok: false, message: error.message };
+      return {
+        ok: true,
+        message: 'E-posta linki veya kodu gonderildi. Baglantiya dokunursan uygulama otomatik giris yapar.',
+      };
+    }
 
-  if (kind === 'phone') {
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: target.trim(),
-      options: { shouldCreateUser: true },
-    });
-    if (error) return { ok: false, message: error.message };
-    return { ok: true, message: 'SMS dogrulama kodu gonderildi.' };
+    if (kind === 'phone') {
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: target.trim(),
+        options: { shouldCreateUser: true },
+      });
+      if (error) return { ok: false, message: error.message };
+      return { ok: true, message: 'SMS dogrulama kodu gonderildi.' };
+    }
+  } catch (error) {
+    return { ok: false, message: toSupabaseMessage(error, 'Supabase dogrulama istegi tamamlanamadi.') };
   }
 
   return { ok: false, message: 'Telefon numarasi veya e-posta gir.' };
@@ -132,18 +150,22 @@ export async function verifySupabaseOtp(
       ? { email: target.trim(), token: code.trim(), type: 'email' as const }
       : { phone: target.trim(), token: code.trim(), type: 'sms' as const };
 
-  const { data, error } = await supabase.auth.verifyOtp(payload);
-  if (error) return { ok: false, message: error.message };
+  try {
+    const { data, error } = await supabase.auth.verifyOtp(payload);
+    if (error) return { ok: false, message: error.message };
 
-  const accessToken = data.session?.access_token;
-  if (!accessToken) {
-    return {
-      ok: false,
-      message: 'Oturum olusmadi. E-posta magic link kullaniyorsan gelen baglantiya dokun.',
-    };
+    const accessToken = data.session?.access_token;
+    if (!accessToken) {
+      return {
+        ok: false,
+        message: 'Oturum olusmadi. E-posta magic link kullaniyorsan gelen baglantiya dokun.',
+      };
+    }
+
+    return { ok: true, accessToken };
+  } catch (error) {
+    return { ok: false, message: toSupabaseMessage(error, 'Supabase kod dogrulamasi tamamlanamadi.') };
   }
-
-  return { ok: true, accessToken };
 }
 
 export async function signInSupabaseWithPassword(
@@ -159,14 +181,18 @@ export async function signInSupabaseWithPassword(
     return { ok: false, message: 'Telefon numarasi veya e-posta gir.' };
   }
 
-  const { data, error } =
-    kind === 'email'
-      ? await supabase.auth.signInWithPassword({ email: target.trim(), password })
-      : await supabase.auth.signInWithPassword({ phone: target.trim(), password });
+  try {
+    const { data, error } =
+      kind === 'email'
+        ? await supabase.auth.signInWithPassword({ email: target.trim(), password })
+        : await supabase.auth.signInWithPassword({ phone: target.trim(), password });
 
-  if (error) return { ok: false, message: error.message };
-  if (!data.session?.access_token) return { ok: false, message: 'Oturum olusturulamadi' };
-  return { ok: true, accessToken: data.session.access_token };
+    if (error) return { ok: false, message: error.message };
+    if (!data.session?.access_token) return { ok: false, message: 'Oturum olusturulamadi' };
+    return { ok: true, accessToken: data.session.access_token };
+  } catch (error) {
+    return { ok: false, message: toSupabaseMessage(error, 'Supabase giris istegi tamamlanamadi.') };
+  }
 }
 
 export async function signUpSupabaseWithPassword(
@@ -182,24 +208,28 @@ export async function signUpSupabaseWithPassword(
     return { ok: false, message: 'Telefon numarasi veya e-posta gir.' };
   }
 
-  const { data, error } =
-    kind === 'email'
-      ? await supabase.auth.signUp({
-          email: target.trim(),
-          password,
-          options: { emailRedirectTo: getSupabaseRedirectUrl() },
-        })
-      : await supabase.auth.signUp({ phone: target.trim(), password });
+  try {
+    const { data, error } =
+      kind === 'email'
+        ? await supabase.auth.signUp({
+            email: target.trim(),
+            password,
+            options: { emailRedirectTo: getSupabaseRedirectUrl() },
+          })
+        : await supabase.auth.signUp({ phone: target.trim(), password });
 
-  if (error) return { ok: false, message: error.message };
-  if (!data.session?.access_token) {
-    return {
-      ok: false,
-      message: kind === 'email'
-        ? 'Kayit basladi. Gelen e-posta baglantisina dokunduktan sonra uygulama otomatik giris yapacak.'
-        : 'Kayit basladi. Gelen SMS kodu veya dogrulama adimi tamamlanmali.',
-    };
+    if (error) return { ok: false, message: error.message };
+    if (!data.session?.access_token) {
+      return {
+        ok: false,
+        message: kind === 'email'
+          ? 'Kayit basladi. Gelen e-posta baglantisina dokunduktan sonra uygulama otomatik giris yapacak.'
+          : 'Kayit basladi. Gelen SMS kodu veya dogrulama adimi tamamlanmali.',
+      };
+    }
+
+    return { ok: true, accessToken: data.session.access_token };
+  } catch (error) {
+    return { ok: false, message: toSupabaseMessage(error, 'Supabase kayit istegi tamamlanamadi.') };
   }
-
-  return { ok: true, accessToken: data.session.access_token };
 }

@@ -344,7 +344,8 @@ def train_forecast(events: list, time_window_hours: int = 48) -> dict:
     print("[forecast] ROC-AUC mean:", model_data["metrics"]["roc_auc_mean"])
     print("[forecast] PR-AUC mean:", model_data["metrics"]["pr_auc_mean"])
     print("[forecast] Brier mean:", model_data["metrics"]["brier_mean"])
-    print("[forecast] Backtest hit rate:", model_data["backtest"]["hit_rate"])
+    print("[forecast] Backtest recall:", model_data["backtest"]["hit_rate"])
+    print("[forecast] Backtest precision:", model_data["backtest"]["precision"])
     print("[forecast] Model kaydedildi:", FORECAST_MODEL)
 
     return model_data

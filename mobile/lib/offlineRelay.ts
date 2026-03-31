@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { sendMessage } from './api';
+import { sendLocationAlert, sendMessage } from './api';
 
 const OFFLINE_RELAY_KEY = 'da_offline_relay_queue_v1';
 
@@ -8,8 +8,16 @@ export type OfflineRelayPacket = {
   id: string;
   toUsername: string;
   body: string;
-  kind: 'chat' | 'emergency';
+  kind: 'chat' | 'emergency' | 'location_alert';
   createdAt: number;
+  locationAlertPayload?: {
+    lat: number;
+    lon: number;
+    magnitude: number;
+    epicenter_lat: number;
+    epicenter_lon: number;
+    event_key: string;
+  };
 };
 
 function createPacketId(): string {
@@ -32,7 +40,7 @@ export async function getOfflineRelayQueue(): Promise<OfflineRelayPacket[]> {
         typeof item.id === 'string' &&
         typeof item.toUsername === 'string' &&
         typeof item.body === 'string' &&
-        (item.kind === 'chat' || item.kind === 'emergency') &&
+        (item.kind === 'chat' || item.kind === 'emergency' || item.kind === 'location_alert') &&
         typeof item.createdAt === 'number'
     );
   } catch {
@@ -67,6 +75,21 @@ export async function flushOfflineRelayQueue(
   let sent = 0;
 
   for (const packet of current.reverse()) {
+    if (packet.kind === 'location_alert' && packet.locationAlertPayload) {
+      const result = await sendLocationAlert(baseUrl, token, packet.locationAlertPayload);
+      if (result.ok && result.sent !== false) {
+        sent += 1;
+        continue;
+      }
+      if (result.ok && result.reason === 'already_sent') {
+        continue;
+      }
+      if (result.retryable) {
+        remaining.unshift(packet);
+      }
+      continue;
+    }
+
     const result = await sendMessage(baseUrl, token, packet.toUsername, packet.body);
     if (result.ok) {
       sent += 1;

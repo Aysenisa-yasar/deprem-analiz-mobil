@@ -1,3 +1,30 @@
+export type WarningCapability = {
+  mode: string;
+  official_sensor_early_warning: boolean;
+  seconds_before_alarm_supported: boolean;
+  siren_alarm_supported: boolean;
+  special_notifications_ready?: boolean;
+  summary?: string;
+};
+
+export type ForecastAdvisory = {
+  level: string;
+  label: string;
+  summary: string;
+  notify_recommended: boolean;
+  critical_notification_recommended: boolean;
+  notification_tier: string;
+  official_sensor_early_warning: boolean;
+  seconds_before_alarm_supported: boolean;
+  reason_codes?: string[];
+  reasons?: string[];
+  actions?: string[];
+  limitations?: string[];
+  quality_level?: string;
+  quality_score?: number;
+  next_event_time_window?: string | null;
+};
+
 export type ModelHealth = {
   available: boolean;
   quality_level: string;
@@ -17,10 +44,20 @@ export type ModelHealth = {
   };
   backtest?: {
     hit_rate?: number | null;
+    accuracy?: number | null;
+    precision?: number | null;
+    recall?: number | null;
+    f1?: number | null;
+    balanced_accuracy?: number | null;
     positive_rate?: number | null;
+    alarm_rate?: number | null;
+    top_decile_precision?: number | null;
+    top_decile_recall?: number | null;
     samples?: number;
     threshold?: number | null;
     mean_prob?: number | null;
+    hit_rate_definition?: string;
+    legacy?: boolean;
   };
 };
 
@@ -36,6 +73,20 @@ export type ForecastPoint = {
   signal_event_count?: number;
   fault_distance?: number;
   model_health?: ModelHealth;
+  warning_capability?: WarningCapability;
+  alert_advisory?: ForecastAdvisory;
+  next_event_time_window?: string | null;
+};
+
+export type ForecastGridPoint = {
+  id: string;
+  lat: number;
+  lon: number;
+  risk_score: number;
+  probability: number;
+  ml_probability?: number;
+  locality_score?: number;
+  signal_event_count?: number;
 };
 
 export type QuakeEvent = {
@@ -89,14 +140,20 @@ export type SupabaseExchangeResult = {
 
 async function fetchJson<T>(
   url: string,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs = 12000
 ): Promise<{ ok: boolean; status: number; data: T | null }> {
   let response: Response;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId =
+    controller != null ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
   try {
-    response = await fetch(url, init);
+    response = await fetch(url, controller ? { ...init, signal: controller.signal } : init);
   } catch {
+    if (timeoutId) clearTimeout(timeoutId);
     return { ok: false, status: 0, data: null };
   }
+  if (timeoutId) clearTimeout(timeoutId);
 
   let data: T | null = null;
   try {
@@ -138,40 +195,63 @@ export async function fetchForecastMap(baseUrl: string): Promise<ForecastPoint[]
   return data.points;
 }
 
+export async function fetchForecastGrid(baseUrl: string): Promise<ForecastGridPoint[]> {
+  const base = baseUrl.replace(/\/$/, '');
+  const { ok, data } = await fetchJson<{
+    status?: string;
+    points?: ForecastGridPoint[];
+  }>(`${base}/api/v2/forecast-grid`, undefined, 8000);
+  if (!ok || !data || data.status !== 'success' || !Array.isArray(data.points)) {
+    if (!ok) throw new Error('network');
+    return [];
+  }
+  return data.points;
+}
+
 export async function fetchForecastLocation(
   baseUrl: string,
   lat: number,
   lon: number
-): Promise<{ point: ForecastPoint | null; modelHealth: ModelHealth | null }> {
+): Promise<{
+  point: ForecastPoint | null;
+  modelHealth: ModelHealth | null;
+  warningCapability: WarningCapability | null;
+}> {
   const base = baseUrl.replace(/\/$/, '');
   const { ok, data } = await fetchJson<{
     status?: string;
     point?: ForecastPoint;
     model_health?: ModelHealth;
+    warning_capability?: WarningCapability;
   }>(`${base}/api/v2/forecast-location?lat=${lat}&lon=${lon}`);
   if (!ok || !data || data.status !== 'success') {
     if (!ok) throw new Error('network');
-    return { point: null, modelHealth: null };
+    return { point: null, modelHealth: null, warningCapability: null };
   }
   return {
     point: data.point ?? null,
     modelHealth: data.model_health ?? null,
+    warningCapability: data.warning_capability ?? null,
   };
 }
 
 export async function fetchForecastModelStatus(
   baseUrl: string
-): Promise<ModelHealth | null> {
+): Promise<{ modelHealth: ModelHealth | null; warningCapability: WarningCapability | null }> {
   const base = baseUrl.replace(/\/$/, '');
   const { ok, data } = await fetchJson<{
     status?: string;
     model_health?: ModelHealth;
+    warning_capability?: WarningCapability;
   }>(`${base}/api/v2/forecast-model-status`);
   if (!ok || !data || data.status !== 'success') {
     if (!ok) throw new Error('network');
-    return null;
+    return { modelHealth: null, warningCapability: null };
   }
-  return data.model_health ?? null;
+  return {
+    modelHealth: data.model_health ?? null,
+    warningCapability: data.warning_capability ?? null,
+  };
 }
 
 export async function fetchRecentQuakes(
@@ -423,11 +503,12 @@ export async function sendLocationAlert(
     epicenter_lon: number;
     event_key: string;
   }
-): Promise<{ ok: boolean; sent?: boolean; reason?: string }> {
+): Promise<{ ok: boolean; sent?: boolean; reason?: string; retryable?: boolean; message?: string }> {
   const base = baseUrl.replace(/\/$/, '');
-  const { ok, data } = await fetchJson<{
+  const { ok, status, data } = await fetchJson<{
     sent?: boolean;
     reason?: string;
+    message?: string;
     status?: string;
   }>(`${base}/api/mobile/location-alert`, {
     method: 'POST',
@@ -437,8 +518,14 @@ export async function sendLocationAlert(
     },
     body: JSON.stringify(payload),
   });
-  if (!ok || !data) return { ok: false };
-  return { ok: true, sent: data.sent, reason: data.reason };
+  if (!ok || !data) {
+    return {
+      ok: false,
+      retryable: status === 0 || status >= 500,
+      message: data?.message || 'Konum uyarisi gonderilemedi',
+    };
+  }
+  return { ok: true, sent: data.sent, reason: data.reason, message: data.message };
 }
 
 export async function askChatbot(

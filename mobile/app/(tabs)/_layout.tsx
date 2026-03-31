@@ -89,6 +89,7 @@ export default function TabLayout() {
         name="messages"
         options={{
           title: 'Mesaj',
+          tabBarHideOnKeyboard: true,
           tabBarIcon: ({ color }) => <TabBarIcon name="comments" color={color} />,
         }}
       />

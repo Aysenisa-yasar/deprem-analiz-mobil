@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,7 +11,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import * as Location from 'expo-location';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import {
@@ -20,9 +18,11 @@ import {
   type AlertPreferences,
 } from '@/context/AlertPreferencesContext';
 import { useAuth } from '@/context/AuthContext';
+import { useMesh } from '@/context/MeshContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
 import { setEmergencyContact } from '@/lib/api';
 import { DEFAULT_API_URL } from '@/lib/config';
+import { getSafeDeviceLocation } from '@/lib/location';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme();
@@ -33,6 +33,7 @@ export default function SettingsScreen() {
   const { ready, token, user, apiBase, setApiBase, login, register, logout, refreshMe } =
     useAuth();
   const { ready: alertsReady, preferences, updatePreferences } = useAlertPreferences();
+  const { running: meshRunning, connectedPeers, availability } = useMesh();
 
   const [urlInput, setUrlInput] = useState(apiBase);
   const [userIn, setUserIn] = useState('');
@@ -131,21 +132,16 @@ export default function SettingsScreen() {
   };
 
   const askLocation = async () => {
-    const fg = await Location.requestForegroundPermissionsAsync();
-    if (fg.status !== 'granted') {
-      Alert.alert('Konum', 'Deprem uyarilari icin konum izni gerekiyor.');
+    const result = await getSafeDeviceLocation({ requestPermission: true, allowLastKnown: true });
+    if (!result.ok) {
+      Alert.alert('Konum', result.message);
       return;
     }
-
-    if (Platform.OS === 'ios') {
-      try {
-        await Location.requestBackgroundPermissionsAsync();
-      } catch {
-        /* ignore */
-      }
-    }
-
-    setMessage('Konum izni verildi.');
+    setMessage(
+      result.source === 'last_known'
+        ? 'Konum izni verildi. Son bilinen konum kullanilabiliyor.'
+        : `Konum hazir: ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}`
+    );
   };
 
   return (
@@ -183,17 +179,12 @@ export default function SettingsScreen() {
                   Telefon: {user.phone}
                 </Text>
               ) : null}
-              {user.email ? (
-                <Text style={[styles.accountSub, { color: t.textSecondary }]}>
-                  E-posta: {user.email}
-                </Text>
-              ) : null}
             </View>
           </View>
         ) : (
           <Text style={[styles.helper, { color: t.textSecondary }]}>
             Hesap acinca mesajlar, acil durum durumlari ve otomatik konum paylasimi kullanilabilir.
-            Ilk ekranda telefon veya e-posta ile kod akisi da destekleniyor.
+            Simdilik yalnizca kullanici adi ve sifre ile giris acik.
           </Text>
         )}
 
@@ -294,6 +285,13 @@ export default function SettingsScreen() {
 
         <Text style={[styles.note, { color: t.textSecondary }]}>
           Acil kisiya otomatik konum paylasimi guvenlik icin sabit esikte calisir: M5+ ve 150 km.
+        </Text>
+        <Text style={[styles.note, { color: t.textSecondary }]}>
+          Monitor su an {preferences.enabled ? 'acik' : 'kapali'}.
+          {' '}Mesh {meshRunning ? `aktif ve ${connectedPeers.length} cihaza bagli` : 'kapali'}.
+        </Text>
+        <Text style={[styles.note, { color: t.textSecondary }]}>
+          Yakin cihaz modu: {availability?.supported ? 'hazir' : availability?.reason || 'kontrol ediliyor'}
         </Text>
 
         <Pressable
