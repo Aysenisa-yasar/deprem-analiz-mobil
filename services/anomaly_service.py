@@ -2,8 +2,7 @@
 from forecast.features import extract_features
 
 
-def anomaly_score(events: list, lat: float, lon: float, time_window_hours: int = 48) -> float:
-    feats = extract_features(events, lat, lon, time_window_hours=time_window_hours)
+def anomaly_score_from_features(feats: dict | None) -> float:
     if not feats or feats.get("count", 0) == 0:
         return 0.0
     score = 0.0
@@ -18,3 +17,8 @@ def anomaly_score(events: list, lat: float, lon: float, time_window_hours: int =
     if feats.get("recency_energy", 0) > 6:
         score += 0.15
     return min(1.0, score)
+
+
+def anomaly_score(events: list, lat: float, lon: float, time_window_hours: int = 48) -> float:
+    feats = extract_features(events, lat, lon, time_window_hours=time_window_hours)
+    return anomaly_score_from_features(feats)

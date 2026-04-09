@@ -22,8 +22,6 @@ import xgboost as xgb
 import lightgbm as lgb
 from flask_cors import CORS 
 from threading import Thread
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
 import requests.exceptions
 import pandas as pd 
 from textblob import TextBlob
@@ -37,12 +35,19 @@ logger = logging.getLogger(__name__)
 # --- FLASK UYGULAMASI VE AYARLARI ---
 app = Flask(__name__)
 
+
+def create_app():
+    """Legacy giris noktasi icin uyumluluk katmani."""
+    return app
+
 # Yeni mimari: forecast + services + routes (v2 API)
 try:
     from routes.forecast_routes import forecast_bp
     from routes.metrics_routes import metrics_bp
+    from routes.admin_routes import admin_bp
     app.register_blueprint(forecast_bp)
     app.register_blueprint(metrics_bp)
+    app.register_blueprint(admin_bp)
 except ImportError as e:
     logger.warning("[APP] Forecast/metrics blueprint yüklenemedi: %s", e)
 try:
@@ -286,49 +291,6 @@ def fetch_earthquake_data_with_retry(url, max_retries=2, timeout=60):
     api_cache['data'] = data
     api_cache['timestamp'] = current_time
     return data
-
-# --- TWILIO BİLDİRİM SABİTLERİ (ORTAM DEĞİŞKENLERİNDEN OKUNUR) ---
-# Twilio kimlik bilgileri ve numarası, Render ortam değişkenlerinden alınır.
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
-TWILIO_WHATSAPP_NUMBER = os.environ.get("TWILIO_WHATSAPP_NUMBER")
-
-# --- META WHATSAPP BUSINESS API AYARLARI ---
-# Meta WhatsApp Business API için gerekli bilgiler (kalıcı token kullanılmalı)
-# ChatGPT formatı: META_WA_TOKEN (öncelikli) veya META_WHATSAPP_ACCESS_TOKEN (geriye dönük uyumluluk)
-META_WHATSAPP_ACCESS_TOKEN = os.environ.get("META_WA_TOKEN") or os.environ.get("META_WHATSAPP_ACCESS_TOKEN")
-META_WHATSAPP_PHONE_NUMBER_ID = os.environ.get("META_WHATSAPP_PHONE_NUMBER_ID", "833412653196098")
-META_WHATSAPP_API_VERSION = os.environ.get("META_WHATSAPP_API_VERSION", "v22.0")
-META_WHATSAPP_TEST_NUMBER = os.environ.get("META_WHATSAPP_TEST_NUMBER", "+15551679784")  # Test numarası (From)
-META_WHATSAPP_API_URL = f"https://graph.facebook.com/{META_WHATSAPP_API_VERSION}/{META_WHATSAPP_PHONE_NUMBER_ID}/messages"
-
-# Meta WhatsApp API kullanılabilir mi kontrolü
-USE_META_WHATSAPP = bool(META_WHATSAPP_ACCESS_TOKEN and META_WHATSAPP_PHONE_NUMBER_ID)
-
-# --- KULLANICI AYARLARI (KALICI HAFIZA - JSON DOSYASI) ---
-USER_DATA_FILE = 'user_alerts.json'
-last_big_earthquake = {'mag': 0, 'time': 0}
-
-def load_user_alerts():
-    """ Kullanıcı konum bilgilerini JSON dosyasından yükler. """
-    try:
-        if os.path.exists(USER_DATA_FILE):
-            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"Kullanıcı verileri yüklenirken hata: {e}")
-    return {}
-
-def save_user_alerts(user_alerts):
-    """ Kullanıcı konum bilgilerini JSON dosyasına kaydeder. """
-    try:
-        with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(user_alerts, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Kullanıcı verileri kaydedilirken hata: {e}")
-
-# Başlangıçta kullanıcı verilerini yükle
-user_alerts = load_user_alerts()
 
 # --- GELİŞMİŞ MAKİNE ÖĞRENMESİ MODELLERİ ---
 EARTHQUAKE_HISTORY_FILE = 'earthquake_history.json'
@@ -681,209 +643,6 @@ TURKEY_CITIES = {
 
 
 # --- YARDIMCI FONKSİYONLAR ---
-
-def send_whatsapp_via_meta_api(recipient_number, body, location_url=None):
-    """
-    Meta WhatsApp Business API ile serbest metin mesajı gönderir.
-    Kullanıcı daha önce session açmışsa (24 saat içinde) serbest metin gönderebilir.
-    Returns: (success: bool, error_message: str veya None)
-    """
-    if not USE_META_WHATSAPP:
-        return False, "Meta WhatsApp API ayarları yapılmamış"
-    
-    try:
-        # Numara formatını düzelt (ülke kodu ile, + işareti olmadan)
-        clean_number = recipient_number.replace('+', '').replace(' ', '').replace('-', '')
-        
-        # Konum linki varsa mesaja ekle
-        if location_url:
-            body += f"\n\n📍 Konum: {location_url}"
-        
-        # Meta WhatsApp API payload
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": clean_number,
-            "type": "text",
-            "text": {
-                "body": body
-            }
-        }
-        
-        # Headers
-        headers = {
-            "Authorization": f"Bearer {META_WHATSAPP_ACCESS_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        
-        # API çağrısı
-        response = requests.post(
-            META_WHATSAPP_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"[OK] Meta WhatsApp mesajı gönderildi: {recipient_number}")
-            print(f"[OK] Message ID: {result.get('messages', [{}])[0].get('id', 'N/A')}")
-            return True, None
-        else:
-            error_data = response.json() if response.text else {}
-            error_msg = error_data.get('error', {}).get('message', f"HTTP {response.status_code}")
-            error_code = error_data.get('error', {}).get('code', response.status_code)
-            
-            print(f"[ERROR] Meta WhatsApp API hatası: {error_msg} (Code: {error_code})")
-            
-            # Session açılmamış hatası (kullanıcı henüz mesaj atmamış)
-            if error_code == 131047 or "session" in error_msg.lower() or "24 hour" in error_msg.lower():
-                return False, "SESSION_REQUIRED"  # Özel hata kodu
-            
-            return False, error_msg
-            
-    except requests.exceptions.Timeout:
-        print("[ERROR] Meta WhatsApp API timeout")
-        return False, "API timeout"
-    except Exception as e:
-        error_msg = str(e)
-        print(f"[ERROR] Meta WhatsApp API beklenmeyen hata: {error_msg}")
-        return False, f"Beklenmeyen hata: {error_msg}"
-
-def send_sms_via_twilio(recipient_number, body):
-    """
-    Twilio SMS API ile SMS gönderir (fallback için).
-    Returns: (success: bool, error_message: str veya None)
-    """
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
-        return False, "Twilio SMS ayarları yapılmamış"
-    
-    try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        
-        # Numara formatını düzelt
-        if not recipient_number.startswith('+'):
-            recipient_number = '+' + recipient_number.lstrip('0')
-        
-        # SMS gönder (Twilio'nun normal SMS numarası gerekli, WhatsApp numarası değil)
-        # Burada Twilio'nun SMS numarasını kullanmanız gerekir (TWILIO_SMS_FROM_NUMBER)
-        # Şimdilik Twilio WhatsApp numarasını kullanıyoruz (test için)
-        
-        message = client.messages.create(
-            body=body,
-            from_=TWILIO_WHATSAPP_NUMBER.replace('whatsapp:', ''),  # SMS için whatsapp: prefix'i kaldır
-            to=recipient_number
-        )
-        print(f"[OK] SMS gönderildi: {recipient_number}, SID: {message.sid}")
-        return True, None
-    except Exception as e:
-        error_msg = str(e)
-        print(f"[ERROR] SMS gönderme hatası: {error_msg}")
-        return False, error_msg
-
-def send_whatsapp_notification(recipient_number, body, location_url=None):
-    """
-    WhatsApp mesajı gönderir. Önce Meta WhatsApp API dener, başarısız olursa SMS fallback.
-    Hybrid sistem: WhatsApp + SMS fallback
-    Returns: (success: bool, error_message: str veya None)
-    """
-    # ÖNCE Meta WhatsApp API dene (serbest metin - session açılmışsa)
-    if USE_META_WHATSAPP:
-        print("[INFO] Meta WhatsApp API deneniyor...")
-        success, error = send_whatsapp_via_meta_api(recipient_number, body, location_url)
-        
-        if success:
-            return True, None
-        
-        # Session açılmamışsa SMS fallback
-        if error == "SESSION_REQUIRED":
-            print("[INFO] WhatsApp session açılmamış, SMS fallback deneniyor...")
-            sms_success, sms_error = send_sms_via_twilio(recipient_number, body)
-            if sms_success:
-                return True, None
-            return False, f"WhatsApp session gerekli ve SMS gönderilemedi: {sms_error}"
-        
-        # Diğer hatalarda SMS fallback
-        print(f"[WARNING] Meta WhatsApp başarısız ({error}), SMS fallback deneniyor...")
-        sms_success, sms_error = send_sms_via_twilio(recipient_number, body)
-        if sms_success:
-            return True, None
-        return False, f"WhatsApp hatası: {error}, SMS hatası: {sms_error}"
-    
-    # Meta WhatsApp yoksa eski Twilio sistemini kullan
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_WHATSAPP_NUMBER:
-        print("[WARNING] Twilio ayarlari yapilmamis! Ortam degiskenlerini kontrol edin.")
-        print("  Gerekli: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER")
-        return False, "Twilio ayarları yapılmamış"
-    
-    # Sandbox kontrolü - Eğer sandbox numarası kullanılıyorsa uyarı ver
-    is_sandbox = '14155238886' in TWILIO_WHATSAPP_NUMBER or 'sandbox' in TWILIO_WHATSAPP_NUMBER.lower()
-    if is_sandbox:
-        print(f"[INFO] Twilio WhatsApp Sandbox modu aktif. Sadece sandbox'a kayıtlı numaralara mesaj gönderilebilir.")
-        print(f"[INFO] Numara {recipient_number} sandbox'a kayıtlı değilse mesaj gönderilemez.")
-        print(f"[INFO] Çözüm: Twilio Console > Messaging > WhatsApp Sandbox sayfasından 'join code' ile numarayı ekleyin.")
-        print(f"[INFO] Production moduna geçmek için: TWILIO_PRODUCTION_KURULUM.md dosyasına bakın.")
-    else:
-        print(f"[INFO] Twilio WhatsApp Production modu aktif. Tüm numaralara mesaj gönderilebilir.")
-    
-    try:
-        # Client, Ortam Değişkenlerinden alınan SID ve Token ile başlatılır
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        
-        # Numara formatını düzelt (ülke kodu ile başlamalı)
-        if not recipient_number.startswith('+'):
-            recipient_number = '+' + recipient_number.lstrip('0')
-        
-        whatsapp_number = f"whatsapp:{recipient_number}"
-        
-        # Konum linki varsa mesaja ekle
-        if location_url:
-            body += f"\n\nKonum: {location_url}"
-        
-        message = client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=body,
-            to=whatsapp_number
-        )
-        print(f"[OK] WhatsApp bildirimi gonderildi. SID: {message.sid}")
-        return True, None
-    except TwilioRestException as e:
-        error_msg = str(e)
-        error_code = e.code if hasattr(e, 'code') else None
-        status_code = e.status if hasattr(e, 'status') else None
-        
-        print(f"[ERROR] Twilio hatası: {error_msg} (Code: {error_code}, Status: {status_code})")
-        
-        # HTTP 429 - Rate Limit hatası
-        if status_code == 429 or error_code == 20429 or "429" in error_msg or "daily messages limit" in error_msg.lower() or "exceeded" in error_msg.lower():
-            limit_info = "50 mesaj/gün" if "50" in error_msg else "günlük mesaj limiti"
-            error_message = f"HTTP 429 error: Twilio hesabınızın {limit_info} aşıldı. Limit yarın sıfırlanacak. Lütfen daha sonra tekrar deneyin."
-            print(f"[RATE LIMIT] {error_message}")
-            return False, error_message
-        
-        # Diğer hata türleri
-        if "not found" in error_msg.lower() or "invalid" in error_msg.lower():
-            print("[NOT] Twilio hesap bilgileri hatali olabilir. Kontrol edin:")
-            print("  - Account SID dogru mu?")
-            print("  - Auth Token dogru mu?")
-            print("  - WhatsApp numarasi dogru formatta mi? (whatsapp:+14155238886)")
-            return False, "Twilio hesap bilgileri hatalı olabilir"
-        elif "permission" in error_msg.lower() or "unauthorized" in error_msg.lower():
-            print("[NOT] Twilio hesabinizda yetki sorunu var.")
-            print("  - Hesabiniz aktif mi?")
-            print("  - WhatsApp Sandbox'a katildiniz mi?")
-            return False, "Twilio hesabınızda yetki sorunu var"
-        elif "not a valid" in error_msg.lower() or "format" in error_msg.lower():
-            print("[NOT] Telefon numarasi format hatasi.")
-            print("  - Numara ulke kodu ile baslamali (ornek: +905551234567)")
-            print("  - WhatsApp Sandbox'a kayitli numara olmali")
-            return False, "Telefon numarası formatı hatalı"
-        
-        return False, f"Twilio hatası: {error_msg}"
-    except Exception as e:
-        error_msg = str(e)
-        print(f"[ERROR] WhatsApp mesaji gonderilemedi: {error_msg}")
-        return False, f"Beklenmeyen hata: {error_msg}"
-
 # ... (haversine ve calculate_clustering_risk fonksiyonları aynı kalır)
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -3053,7 +2812,7 @@ def chatbot():
             ('güvenlik', 'güvenli', 'nasıl korunur', 'önlem', 'hazırlık', 'deprem öncesi', 'deprem sonrası', 'çök kapan tutun', 'acil durum', 'hazırlık çantası', 'acil çanta'): '🛡️ DEPREM GÜVENLİĞİ:\n\n📌 DEPREM ÖNCESİ:\n• Acil durum çantası hazırlayın (su, yiyecek, ilaç, fener, pil, radyo)\n• Aile acil durum planı yapın\n• Güvenli yerleri belirleyin (masa altı, kolon yanı)\n• Mobilyaları sabitleyin\n• Gaz ve elektrik vanalarının yerini öğrenin\n\n📌 DEPREM SIRASINDA:\n• ÇÖK: Yere çökün\n• KAPAN: Başınızı ve boynunuzu koruyun\n• TUTUN: Sağlam bir yere tutunun\n• Pencerelerden, dolaplardan, asılı eşyalardan uzak durun\n• Asansör kullanmayın\n• Merdivenlerden uzak durun\n\n📌 DEPREM SONRASI:\n• Gaz, elektrik ve su vanalarını kapatın\n• Açık alanlara çıkın\n• Binalara girmeyin\n• Acil durum çantanızı alın\n• Telefon hatlarını gereksiz kullanmayın',
             
             # İstanbul
-            ('istanbul', 'istanbul uyarı', 'istanbul erken uyarı', 'istanbul risk', 'istanbul güvenli mi', 'istanbul deprem'): '🏛️ İSTANBUL ERKEN UYARI SİSTEMİ:\n• İstanbul için özel gelişmiş yapay zeka destekli erken uyarı sistemi\n• "İstanbul Erken Uyarı Durumunu Kontrol Et" butonundan kontrol edebilirsiniz\n• Sistem deprem öncesi sinyalleri tespit ederek önceden uyarı verir\n• Uyarı seviyeleri: KRİTİK (0-24 saat), YÜKSEK (24-72 saat), ORTA (1 hafta), DÜŞÜK\n• WhatsApp bildirimleri ile anında uyarı alabilirsiniz',
+            ('istanbul', 'istanbul uyarı', 'istanbul erken uyarı', 'istanbul risk', 'istanbul güvenli mi', 'istanbul deprem'): '🏛️ İSTANBUL ERKEN UYARI SİSTEMİ:\n• İstanbul için özel gelişmiş yapay zeka destekli erken uyarı sistemi\n• "İstanbul Erken Uyarı Durumunu Kontrol Et" butonundan kontrol edebilirsiniz\n• Sistem deprem öncesi sinyalleri tespit ederek önceden uyarı verir\n• Uyarı seviyeleri: KRİTİK (0-24 saat), YÜKSEK (24-72 saat), ORTA (1 hafta), DÜŞÜK\n• Uygulama içi acil durum akışı ile anında durum takibi yapabilirsiniz',
             
             # Fay hatları
             ('fay', 'fay hattı', 'fay hatları', 'kaf', 'daf', 'aktif fay', 'kuzey anadolu', 'doğu anadolu', 'ege graben'): '🗺️ TÜRKİYE AKTİF FAY HATLARI:\n• Kuzey Anadolu Fay Hattı (KAF) - En aktif fay hattı\n• Doğu Anadolu Fay Hattı (DAF)\n• Ege Graben Sistemi\n• Batı Anadolu Fay Sistemi\n\nHaritada "Son 1 Gün Depremler & Aktif Fay Hatları" bölümünden tüm fay hatlarını görebilirsiniz. Fay hatlarına yakın bölgeler daha yüksek risk taşır.',
@@ -3062,10 +2821,10 @@ def chatbot():
             ('hasar', 'hasar tahmini', 'hasar analizi', 'yıkım', 'zarar', 'bina hasarı', 'yapı hasarı'): '🏙️ HASAR TAHMİNİ:\n• "İl Bazında Risk Analizi" bölümünden tüm illerin risk durumunu görebilirsiniz\n• Sistem son depremlere ve fay hatlarına yakınlığa göre analiz yapar\n• Her il için risk skoru, seviye ve detaylı faktörler gösterilir\n• Bina yapısı analizi (güçlendirilmiş/normal/zayıf) dahil\n• Hasar skoru 0-100 arası hesaplanır',
             
             # Bildirim
-            ('bildirim', 'uyarı', 'whatsapp', 'mesaj', 'sms', 'alarm', 'nasıl bildirim alırım', 'bildirim ayarla'): '📱 WHATSAPP BİLDİRİMLERİ:\n• "Acil Durum WhatsApp Bildirim Ayarları" bölümünden ayarlayabilirsiniz\n• Konumunuzu belirleyin\n• WhatsApp numaranızı girin (ülke kodu ile: +90...)\n• M ≥ 5.0 depremlerde 150 km içindeyse otomatik bildirim alırsınız\n• İstanbul için özel erken uyarı bildirimleri mevcuttur\n• Twilio WhatsApp Sandbox\'a katılmanız gerekiyor (ücretsiz)',
+            ('bildirim', 'uyarı', 'whatsapp', 'mesaj', 'sms', 'alarm', 'nasıl bildirim alırım', 'bildirim ayarla'): '📱 BİLDİRİM AKIŞI:\n• Bildirim ve acil durum özelliklerini mobil uygulama içinden yönetebilirsiniz\n• Konumunuzu ve kayıtlı kişilerinizi uygulama tarafında güncel tutun\n• İstanbul için özel erken uyarı ekranı ayrıca takip edilebilir\n• Kritik olaylarda uygulama içi durum ekranı ve kayıt akışı kullanılır',
             
             # Yardım
-            ('yardım', 'help', 'nasıl kullanılır', 'kullanım', 'ne yapabilirsin', 'komutlar', 'özellikler', 'neler yapabilir'): '💡 NASIL KULLANILIR:\n\n1️⃣ Risk Analizi: Konumunuzu belirleyip risk tahmini yapın\n2️⃣ Deprem Haritası: Son depremleri ve fay hatlarını görüntüleyin\n3️⃣ İl Bazında Analiz: Tüm illerin risk durumunu kontrol edin\n4️⃣ İstanbul Uyarı: İstanbul için erken uyarı durumunu kontrol edin\n5️⃣ Bildirimler: WhatsApp bildirimlerini aktifleştirin\n6️⃣ Türkiye Erken Uyarı: Tüm Türkiye için M≥5.0 deprem uyarıları\n\nBaşka bir sorunuz varsa sorabilirsiniz!',
+            ('yardım', 'help', 'nasıl kullanılır', 'kullanım', 'ne yapabilirsin', 'komutlar', 'özellikler', 'neler yapabilir'): '💡 NASIL KULLANILIR:\n\n1️⃣ Risk Analizi: Konumunuzu belirleyip risk tahmini yapın\n2️⃣ Deprem Haritası: Son depremleri ve fay hatlarını görüntüleyin\n3️⃣ İl Bazında Analiz: Tüm illerin risk durumunu kontrol edin\n4️⃣ İstanbul Uyarı: İstanbul için erken uyarı durumunu kontrol edin\n5️⃣ Bildirimler: Mobil uygulama içi bildirim ve acil durum akışını kullanın\n6️⃣ Türkiye Erken Uyarı: Tüm Türkiye için M≥5.0 deprem uyarıları\n\nBaşka bir sorunuz varsa sorabilirsiniz!',
             
             # Sistem bilgisi
             ('nasıl çalışır', 'sistem', 'yapay zeka', 'ml', 'makine öğrenmesi', 'algoritma', 'model', 'ai', 'yz'): '🤖 SİSTEM NASIL ÇALIŞIR:\n• Kandilli Rasathanesi verilerini kullanır\n• Gerçek zamanlı deprem analizi yapar\n• Makine öğrenmesi modelleri (Random Forest, XGBoost, LightGBM) ile risk tahmini\n• Ensemble learning ile %82 doğruluk\n• Anomali tespiti ile olağandışı aktivite tespit eder\n• Aktif fay hatlarına yakınlık analizi\n• 17 farklı özellik (feature) ile analiz',
@@ -3083,7 +2842,7 @@ def chatbot():
             ('derinlik', 'derin', 'sığ', 'yer kabuğu', 'odak derinliği'): '⛰️ DEPREM DERİNLİĞİ:\n• Sığ depremler (0-70 km): Daha fazla hasar verir\n• Orta derinlik (70-300 km): Orta hasar\n• Derin depremler (300+ km): Daha az hasar\n\nSistem derinlik analizi yaparak hasar tahmini yapar.',
             
             # Erken uyarı
-            ('erken uyarı', 'uyarı sistemi', 'önceden haber', 'tahmin', 'önceden bilmek'): '🚨 ERKEN UYARI SİSTEMİ:\n• İstanbul için özel gelişmiş sistem\n• Deprem öncesi sinyalleri tespit eder\n• Anomali tespiti ile olağandışı aktivite uyarısı\n• Uyarı seviyeleri: KRİTİK, YÜKSEK, ORTA\n• WhatsApp ile anında bildirim\n• Makine öğrenmesi ile yüksek doğruluk',
+            ('erken uyarı', 'uyarı sistemi', 'önceden haber', 'tahmin', 'önceden bilmek'): '🚨 ERKEN UYARI SİSTEMİ:\n• İstanbul için özel gelişmiş sistem\n• Deprem öncesi sinyalleri tespit eder\n• Anomali tespiti ile olağandışı aktivite uyarısı\n• Uyarı seviyeleri: KRİTİK, YÜKSEK, ORTA\n• Uygulama içi durum ekranı ile anında takip\n• Makine öğrenmesi ile yüksek doğruluk',
             
             # İl soruları - Gerçek zamanlı veri ile
             ('ankara', 'izmir', 'bursa', 'antalya', 'adana', 'gaziantep', 'konya', 'şehir', 'il', 'hangi il', 'il durumu', 'şehir durumu', 'il bazlı', 'şehir bazlı'): None,  # Özel işlem gerekiyor
@@ -3431,7 +3190,7 @@ def chatbot():
                 response_text += '• 📊 Son depremler nerede görüntülenir?\n'
                 response_text += '• 🛡️ Deprem sırasında ne yapmalıyım?\n'
                 response_text += '• 🏛️ İstanbul erken uyarı sistemi nasıl çalışır?\n'
-                response_text += '• 📱 WhatsApp bildirimleri nasıl ayarlanır?\n'
+                response_text += '• 📱 Mobil bildirim akışı nasıl kullanılır?\n'
                 response_text += '• 🗺️ Fay hatları nerede?\n'
                 response_text += '• 🤖 Sistem nasıl çalışır?\n'
                 response_text += '• 🌤️ Hava durumu bilgileri\n'
@@ -3455,7 +3214,7 @@ def chatbot():
                         response_text += '• 📊 Deprem bilgileri ve haritalar\n'
                         response_text += '• 🛡️ Güvenlik önlemleri\n'
                         response_text += '• 🏛️ İstanbul erken uyarı sistemi\n'
-                        response_text += '• 📱 WhatsApp bildirimleri\n'
+                        response_text += '• 📱 Mobil bildirim akışı\n'
                         response_text += '• 🗺️ Fay hatları\n'
                         response_text += '• 🤖 Makine öğrenmesi ve sistem\n'
                         response_text += '• 📏 Deprem büyüklüğü ve derinlik\n'
@@ -3471,7 +3230,7 @@ def chatbot():
                     response_text += '• 📊 Deprem bilgileri ve haritalar\n'
                     response_text += '• 🛡️ Güvenlik önlemleri\n'
                     response_text += '• 🏛️ İstanbul erken uyarı sistemi\n'
-                    response_text += '• 📱 WhatsApp bildirimleri\n'
+                    response_text += '• 📱 Mobil bildirim akışı\n'
                     response_text += '• 🗺️ Fay hatları\n'
                     response_text += '• 🤖 Makine öğrenmesi ve sistem\n'
                     response_text += '• 📏 Deprem büyüklüğü ve derinlik\n'
@@ -3488,7 +3247,7 @@ def chatbot():
             response_text += '• 📊 Deprem bilgileri ve haritalar\n'
             response_text += '• 🛡️ Güvenlik önlemleri\n'
             response_text += '• 🏛️ İstanbul erken uyarı sistemi\n'
-            response_text += '• 📱 WhatsApp bildirimleri\n'
+            response_text += '• 📱 Mobil bildirim akışı\n'
             response_text += '• 🗺️ Fay hatları\n'
             response_text += '• 🌤️ Hava durumu\n'
             response_text += '• 📱 Sosyal medya analizi\n'
@@ -3518,250 +3277,7 @@ def chatbot():
         print(f"[ERROR] Chatbot hatası: {e}")
         return jsonify({"response": "Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin."}), 500
 
-@app.route('/api/test-meta-token', methods=['GET'])
-def test_meta_token():
-    """
-    Meta WhatsApp token'ını test eder.
-    ChatGPT önerisi: https://graph.facebook.com/v22.0/833412653196098?access_token=TOKEN
-    """
-    if not META_WHATSAPP_ACCESS_TOKEN:
-        return jsonify({
-            "success": False,
-            "message": "Token bulunamadı. META_WA_TOKEN environment variable'ı ekleyin."
-        }), 400
-    
-    try:
-        test_url = f"https://graph.facebook.com/{META_WHATSAPP_API_VERSION}/{META_WHATSAPP_PHONE_NUMBER_ID}?access_token={META_WHATSAPP_ACCESS_TOKEN}"
-        response = requests.get(test_url, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            return jsonify({
-                "success": True,
-                "message": "✅ Token çalışıyor!",
-                "phone_number_id": data.get('id'),
-                "verified_name": data.get('verified_name', 'N/A'),
-                "display_phone_number": data.get('display_phone_number', 'N/A')
-            })
-        else:
-            error_data = response.json() if response.text else {}
-            error_msg = error_data.get('error', {}).get('message', f"HTTP {response.status_code}")
-            return jsonify({
-                "success": False,
-                "message": f"❌ Token hatası: {error_msg}",
-                "status_code": response.status_code
-            }), response.status_code
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Test hatası: {str(e)}"
-        }), 500
-
-@app.route('/api/test-meta-whatsapp-send', methods=['POST'])
-def test_meta_whatsapp_send():
-    """
-    Meta WhatsApp ile test mesajı gönderir (ChatGPT önerisi).
-    Sadece session açılmışsa çalışır.
-    """
-    if not USE_META_WHATSAPP:
-        return jsonify({
-            "success": False,
-            "message": "Meta WhatsApp API ayarları yapılmamış"
-        }), 503
-    
-    data = request.get_json() or {}
-    test_number = data.get('to', '905468964210')  # Varsayılan test numarası
-    
-    test_message = "🚨 Test başarılı. AfetBot aktif."
-    
-    success, error = send_whatsapp_via_meta_api(test_number, test_message)
-    
-    if success:
-        return jsonify({
-            "success": True,
-            "message": "✅ Test mesajı gönderildi!",
-            "to": test_number
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "message": f"❌ Mesaj gönderilemedi: {error}",
-            "error": error,
-            "note": "Session açılmamış olabilir. Önce opt-in linki ile session açın."
-        }), 400
-
-@app.route('/api/get-opt-in-link', methods=['GET'])
-def get_opt_in_link():
-    """
-    Meta WhatsApp için opt-in linki döndürür.
-    Kullanıcı bu linke tıklayıp 'basla' yazarsa 24 saat boyunca serbest metin gönderebiliriz.
-    """
-    if not USE_META_WHATSAPP:
-        return jsonify({
-            "success": False,
-            "message": "Meta WhatsApp API ayarları yapılmamış"
-        }), 503
-    
-    # Opt-in linki oluştur (wa.me formatında)
-    # Test numarası: +15551679784 -> 15551679784
-    test_number_clean = META_WHATSAPP_TEST_NUMBER.replace('+', '').replace(' ', '').replace('-', '')
-    opt_in_link = f"https://wa.me/{test_number_clean}?text=basla"
-    
-    return jsonify({
-        "success": True,
-        "opt_in_link": opt_in_link,
-        "test_number": META_WHATSAPP_TEST_NUMBER,
-        "message": "Bu linke tıklayıp 'basla' yazın. Sonra 24 saat boyunca serbest metin bildirimleri alabilirsiniz.",
-        "instructions": [
-            "1. Aşağıdaki linke tıklayın",
-            "2. WhatsApp'ta 'basla' yazın ve gönderin",
-            "3. Artık 24 saat boyunca serbest metin bildirimleri alabilirsiniz"
-        ]
-    })
-
-@app.route('/api/set-alert', methods=['POST'])
-def set_alert_settings():
-    """ Kullanıcının konumunu ve bildirim telefon numarasını kaydeder ve onay mesajı gönderir. """
-    try:
-        global user_alerts
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "error", "message": "Geçersiz istek. JSON verisi bekleniyor."}), 400
-        
-        try:
-            lat = float(data.get('lat', 0))
-            lon = float(data.get('lon', 0))
-        except (ValueError, TypeError):
-            return jsonify({"status": "error", "message": "Geçersiz koordinat formatı."}), 400
-        
-        # Koordinat kontrolü
-        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-            return jsonify({"status": "error", "message": "Geçersiz koordinatlar."}), 400
-        
-        number = data.get('number', '').strip() 
-        
-        if not number:
-            return jsonify({"status": "error", "message": "Telefon numarası gereklidir."}), 400
-        
-        if not number.startswith('+'):
-            return jsonify({"status": "error", "message": "Telefon numarası ülke kodu ile (+XX) başlamalıdır. Örnek: +90532xxxxxxx"}), 400
-        
-        # Konum bilgisini kalıcı hafızaya kaydet
-        user_alerts[number] = {
-            'lat': lat, 
-            'lon': lon,
-            'registered_at': datetime.now().isoformat()
-        }
-        save_user_alerts(user_alerts)
-        
-        print(f"Yeni WhatsApp Bildirim Ayarı Kaydedildi: {number} @ ({lat:.2f}, {lon:.2f})")
-        
-        # Google Maps konum linki oluştur
-        location_url = f"https://www.google.com/maps?q={lat},{lon}"
-        
-        # Başarılı kayıt sonrası onay mesajı gönderme
-        confirmation_body = f"🎉 YZ Destekli Deprem İzleme Sistemi'ne hoş geldiniz!\n"
-        confirmation_body += f"✅ Bildirimler, konumunuz için başarıyla etkinleştirildi.\n"
-        confirmation_body += f"📍 Kayıtlı Konum: {lat:.4f}, {lon:.4f}\n"
-        confirmation_body += f"🔔 Bölgenizde (150 km içinde) M ≥ 5.0 deprem olursa size anında WhatsApp ile haber vereceğiz."
-        
-        # Onay mesajını göndermeyi dene
-        send_success, send_error = send_whatsapp_notification(number, confirmation_body, location_url)
-        if not send_success and send_error:
-            print(f"[WARNING] WhatsApp bildirimi gönderilemedi: {send_error}")
-            # Bildirim gönderilemese bile ayarları kaydet
-        
-        return jsonify({"status": "success", "message": "Bildirim ayarlarınız kaydedildi."})
-    except ValueError as e:
-        return jsonify({"status": "error", "message": f"Geçersiz veri formatı: {str(e)}"}), 400
-    except Exception as e:
-        print(f"[ERROR] Bildirim ayarları hatası: {e}")
-        return jsonify({"status": "error", "message": f"Sunucu hatası: {str(e)}"}), 500
-
-# WhatsApp Web servisi kaldırıldı - sadece Twilio kullanılıyor
-
-@app.route('/api/istanbul-alert', methods=['POST'])
-def set_istanbul_alert():
-    """ İstanbul için özel erken uyarı bildirimi kaydeder. Depremden ÖNCE mesaj gönderir. """
-    try:
-        global user_alerts
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "error", "message": "Geçersiz istek. JSON verisi bekleniyor."}), 400
-        
-        number = data.get('number', '').strip()
-        
-        if not number:
-            return jsonify({"status": "error", "message": "Telefon numarası gereklidir."}), 400
-        
-        if not number.startswith('+'):
-            return jsonify({"status": "error", "message": "Telefon numarası ülke kodu ile (+XX) başlamalıdır. Örnek: +90532xxxxxxx"}), 400
-        
-        # İstanbul koordinatları (varsayılan olarak İstanbul merkez)
-        istanbul_lat = ISTANBUL_COORDS['lat']
-        istanbul_lon = ISTANBUL_COORDS['lon']
-        
-        # Kullanıcı özel koordinat vermişse onu kullan
-        if data.get('lat') and data.get('lon'):
-            try:
-                lat = float(data.get('lat'))
-                lon = float(data.get('lon'))
-                if (-90 <= lat <= 90) and (-180 <= lon <= 180):
-                    istanbul_lat = lat
-                    istanbul_lon = lon
-            except (ValueError, TypeError):
-                pass  # Varsayılan İstanbul koordinatlarını kullan
-        
-        # İstanbul için özel işaretle
-        user_alerts[number] = {
-            'lat': istanbul_lat,
-            'lon': istanbul_lon,
-            'registered_at': datetime.now().isoformat(),
-            'istanbul_alert': True  # İstanbul erken uyarı için özel işaret
-        }
-        save_user_alerts(user_alerts)
-        
-        print(f"İstanbul Erken Uyarı Bildirimi Kaydedildi: {number} @ ({istanbul_lat:.2f}, {istanbul_lon:.2f})")
-        
-        # Onay mesajı
-        confirmation_body = f"🏛️ İSTANBUL ERKEN UYARI SİSTEMİ 🏛️\n"
-        confirmation_body += f"✅ İstanbul için erken uyarı bildirimleri başarıyla etkinleştirildi!\n\n"
-        confirmation_body += f"📍 Kayıtlı Konum: {istanbul_lat:.4f}, {istanbul_lon:.4f}\n\n"
-        confirmation_body += f"🔔 SİSTEM NASIL ÇALIŞIR?\n"
-        confirmation_body += f"• Yapay zeka destekli erken uyarı sistemi İstanbul çevresindeki deprem aktivitesini sürekli izler\n"
-        confirmation_body += f"• Anormal aktivite tespit edildiğinde DEPREM ÖNCESİ size WhatsApp ile bildirim gönderilir\n"
-        confirmation_body += f"• Uyarı seviyeleri: KRİTİK (0-24 saat), YÜKSEK (24-72 saat), ORTA (1 hafta)\n"
-        confirmation_body += f"• Bildirimler otomatik olarak gönderilir, ek işlem yapmanıza gerek yok\n\n"
-        confirmation_body += f"⚠️ Lütfen hazırlıklı olun ve acil durum planınızı gözden geçirin!"
-        
-        # Onay mesajını göndermeyi dene
-        send_success, send_error = send_whatsapp_notification(number, confirmation_body)
-        warning_message = None
-        
-        if not send_success and send_error:
-            # HTTP 429 veya diğer hatalar için uyarı mesajı hazırla
-            if "429" in send_error or "limit" in send_error.lower():
-                warning_message = f"UYARI: Onay mesajı gönderilemedi. {send_error}"
-            else:
-                warning_message = f"UYARI: Onay mesajı gönderilemedi. {send_error}"
-            print(f"[WARNING] {warning_message}")
-        
-        response_data = {
-            "status": "success",
-            "message": "İstanbul erken uyarı bildirimleri başarıyla kaydedildi. Deprem öncesi sinyaller tespit edildiğinde size WhatsApp ile bildirim gönderilecektir."
-        }
-        
-        # Eğer mesaj gönderilemediyse uyarı ekle
-        if warning_message:
-            response_data["warning"] = warning_message
-        
-        return jsonify(response_data)
-    except Exception as e:
-        print(f"[ERROR] İstanbul bildirim ayarları hatası: {e}")
-        return jsonify({"status": "error", "message": f"Sunucu hatası: {str(e)}"}), 500
-
-
-# --- ARKA PLAN BİLDİRİM KONTROLÜ ---
+# --- ARKA PLAN SERVİSLERİ ---
 
 def collect_training_data_continuously():
     """
@@ -3837,186 +3353,6 @@ def collect_training_data_continuously():
             traceback.print_exc()
             continue
 
-def check_for_big_earthquakes():
-    """ Arka planda sürekli çalışır, M >= 5.0 deprem olup olmadığını kontrol eder. """
-    global last_big_earthquake, user_alerts
-    last_istanbul_alert_time = {}  # Her kullanıcı için son bildirim zamanı (spam önleme)
-    
-    while True:
-        time.sleep(30)  # 30 saniyede bir kontrol et (daha hızlı tepki)
-
-        try:
-            earthquakes = fetch_earthquake_data_with_retry(KANDILLI_API, max_retries=1, timeout=30)
-            if not earthquakes:
-                continue
-        except Exception:
-            continue
-        
-        # TÜM TÜRKİYE İÇİN ERKEN UYARI KONTROLÜ (M ≥ 5.0 deprem riski)
-        try:
-            turkey_warnings = turkey_early_warning_system(earthquakes)
-            
-            # Her şehir için kontrol et
-            for city_name, warning_data in turkey_warnings.items():
-                alert_level = warning_data.get('alert_level', 'Normal')
-                predicted_mag = warning_data.get('predicted_magnitude', 0)
-                
-                # M ≥ 5.0 riski varsa ve KRİTİK/YÜKSEK/ORTA seviyede bildirim gönder
-                if alert_level in ['KRİTİK', 'YÜKSEK', 'ORTA'] and predicted_mag >= 5.0:
-                    print(f"🚨 {city_name} ERKEN UYARI: {alert_level} - Tahmini M{predicted_mag:.1f} - {warning_data.get('time_to_event', '')}")
-                    
-                    # Kullanıcı verilerini tekrar yükle
-                    user_alerts = load_user_alerts()
-                    
-                    # Bu şehir için kayıtlı kullanıcılara bildirim gönder
-                    for number, coords in user_alerts.items():
-                        city, _ = find_nearest_city(coords['lat'], coords['lon'])
-                        
-                        if city == city_name:
-                            # Spam önleme
-                            alert_key = f"{number}_{city_name}_{alert_level}"
-                            current_time = time.time()
-                            
-                            if alert_key in last_istanbul_alert_time:
-                                time_since_last = current_time - last_istanbul_alert_time[alert_key]
-                                if time_since_last < 3600:  # 1 saat
-                                    continue
-                            
-                            # Bildirim gönder
-                            body = f"🚨 {city_name.upper()} ERKEN UYARI SİSTEMİ 🚨\n\n"
-                            body += f"⚠️ M ≥ 5.0 DEPREM RİSKİ TESPİT EDİLDİ ⚠️\n\n"
-                            body += f"Şehir: {city_name}\n"
-                            body += f"Uyarı Seviyesi: {alert_level}\n"
-                            body += f"Uyarı Skoru: {warning_data.get('alert_score', 0):.2f}/1.0\n"
-                            body += f"Tahmini Büyüklük: M{predicted_mag:.1f}\n"
-                            body += f"Tahmini Süre: {warning_data.get('time_to_event', 'Bilinmiyor')}\n"
-                            body += f"Mesaj: {warning_data.get('message', 'Anormal aktivite tespit edildi')}\n"
-                            
-                            body += f"\n📊 DETAYLAR:\n"
-                            body += f"• Son deprem sayısı: {warning_data.get('recent_earthquakes', 0)}\n"
-                            body += f"• Anomali tespit edildi: {'Evet' if warning_data.get('anomaly_detected') else 'Hayır'}\n"
-                            
-                            body += f"\n⚠️ LÜTFEN HAZIRLIKLI OLUN:\n"
-                            body += f"• Acil durum çantanızı hazırlayın\n"
-                            body += f"• Güvenli yerleri belirleyin\n"
-                            body += f"• Aile acil durum planınızı gözden geçirin\n"
-                            body += f"• Sakin kalın ve hazırlıklı olun"
-                            
-                            send_success, send_error = send_whatsapp_notification(number, body)
-                            if send_success:
-                                last_istanbul_alert_time[alert_key] = current_time
-                                print(f"✅ {city_name} erken uyarı bildirimi gönderildi: {number}")
-                            else:
-                                print(f"[ERROR] {city_name} bildirimi gönderilemedi ({number}): {send_error}")
-        except Exception as e:
-            print(f"[ERROR] Türkiye erken uyarı kontrolü hatası: {e}")
-        
-        # İstanbul erken uyarı kontrolü (eski sistem - geriye dönük uyumluluk)
-        try:
-            istanbul_warning = istanbul_early_warning_system(earthquakes)
-            alert_level = istanbul_warning.get('alert_level', 'Normal')
-            
-            # KRİTİK, YÜKSEK veya ORTA seviyede bildirim gönder
-            if alert_level in ['KRİTİK', 'YÜKSEK', 'ORTA']:
-                print(f"🚨 İSTANBUL ERKEN UYARI: {alert_level} - {istanbul_warning.get('message', '')}")
-                
-                # Kullanıcı verilerini tekrar yükle (güncel olması için)
-                user_alerts = load_user_alerts()
-                
-                # İstanbul için kayıtlı kullanıcılara bildirim gönder
-                for number, coords in user_alerts.items():
-                    # İstanbul erken uyarı için kayıtlı mı kontrol et
-                    is_istanbul_alert = coords.get('istanbul_alert', False)
-                    city, _ = find_nearest_city(coords['lat'], coords['lon'])
-                    
-                    # İstanbul'da veya İstanbul erken uyarı için kayıtlıysa
-                    if city == 'İstanbul' or is_istanbul_alert:
-                        # Spam önleme: Aynı seviye için 1 saat içinde tekrar bildirim gönderme
-                        alert_key = f"{number}_{alert_level}"
-                        current_time = time.time()
-                        
-                        if alert_key in last_istanbul_alert_time:
-                            time_since_last = current_time - last_istanbul_alert_time[alert_key]
-                            if time_since_last < 3600:  # 1 saat
-                                continue  # Bu seviye için son 1 saatte bildirim gönderildi, atla
-                        
-                        # Bildirim gönder
-                        body = f"🚨 İSTANBUL ERKEN UYARI SİSTEMİ 🚨\n\n"
-                        body += f"⚠️ DEPREM ÖNCESİ UYARI ⚠️\n\n"
-                        body += f"Uyarı Seviyesi: {alert_level}\n"
-                        body += f"Uyarı Skoru: {istanbul_warning.get('alert_score', 0):.2f}/1.0\n"
-                        body += f"Mesaj: {istanbul_warning.get('message', 'Anormal aktivite tespit edildi')}\n"
-                        
-                        if istanbul_warning.get('time_to_event'):
-                            body += f"Tahmini Süre: {istanbul_warning['time_to_event']}\n"
-                        
-                        body += f"\n📊 DETAYLAR:\n"
-                        body += f"• Son deprem sayısı: {istanbul_warning.get('recent_earthquakes', 0)}\n"
-                        body += f"• Anomali tespit edildi: {'Evet' if istanbul_warning.get('anomaly_detected') else 'Hayır'}\n"
-                        
-                        body += f"\n⚠️ LÜTFEN HAZIRLIKLI OLUN:\n"
-                        body += f"• Acil durum çantanızı hazırlayın\n"
-                        body += f"• Güvenli yerleri belirleyin\n"
-                        body += f"• Aile acil durum planınızı gözden geçirin\n"
-                        body += f"• Sakin kalın ve hazırlıklı olun"
-                        
-                        send_success, send_error = send_whatsapp_notification(number, body)
-                        if send_success:
-                            last_istanbul_alert_time[alert_key] = current_time
-                            print(f"✅ İstanbul erken uyarı bildirimi gönderildi: {number}")
-                        else:
-                            print(f"[ERROR] İstanbul bildirimi gönderilemedi ({number}): {send_error}")
-        except Exception as e:
-            print(f"[ERROR] İstanbul erken uyarı kontrolü hatası: {e}")
-
-        for eq in earthquakes:
-            mag = eq.get('mag', 0)
-            
-            if mag >= 5.0 and time.time() - last_big_earthquake['time'] > 1800:
-                
-                if eq.get('geojson') and eq['geojson'].get('coordinates'):
-                    lon_eq, lat_eq = eq['geojson']['coordinates']
-                    
-                    print(f"!!! YENİ BÜYÜK DEPREM TESPİT EDİLDİ: M{mag} @ ({lat_eq:.2f}, {lon_eq:.2f})")
-                    last_big_earthquake = {'mag': mag, 'time': time.time()}
-
-                    # Kullanıcı verilerini tekrar yükle (güncel olması için)
-                    user_alerts = load_user_alerts()
-                    
-                    for number, coords in user_alerts.items():
-                        distance = haversine(coords['lat'], coords['lon'], lat_eq, lon_eq)
-                        
-                        if distance < 150:
-                            deprem_time_str = f"{eq.get('date')} {eq.get('time')}"
-                            
-                            # Hasar tahmini yap
-                            depth = eq.get('depth', 10)
-                            damage_info = calculate_damage_estimate(mag, depth, distance)
-                            
-                            # Google Maps konum linki (deprem merkezi)
-                            eq_location_url = f"https://www.google.com/maps?q={lat_eq},{lon_eq}"
-                            
-                            # Kullanıcı konum linki
-                            user_location_url = f"https://www.google.com/maps?q={coords['lat']},{coords['lon']}"
-                            
-                            body = f"🚨 ACİL DEPREM UYARISI 🚨\n"
-                            body += f"Büyüklük: M{mag:.1f}\n"
-                            body += f"Yer: {eq.get('location', 'Bilinmiyor')}\n"
-                            body += f"Saat: {deprem_time_str}\n"
-                            body += f"Derinlik: {depth} km\n"
-                            body += f"Mesafe: {distance:.1f} km (Konumunuza yakın)\n\n"
-                            body += f"📊 HASAR TAHMİNİ:\n"
-                            body += f"Seviye: {damage_info['level']}\n"
-                            body += f"Skor: {damage_info['damage_score']}/100\n"
-                            body += f"Açıklama: {damage_info['description']}\n\n"
-                            body += f"📍 Deprem Merkezi: {eq_location_url}\n"
-                            body += f"📍 Sizin Konumunuz: {user_location_url}\n\n"
-                            body += f"⚠️ Lütfen güvende kalın ve acil durum planınızı uygulayın!"
-                            
-                            send_success, send_error = send_whatsapp_notification(number, body)
-                            if not send_success:
-                                print(f"[ERROR] Büyük deprem bildirimi gönderilemedi ({number}): {send_error}")
-
 # Arka plan servisleri - sadece __main__ veya ENABLE_BACKGROUND_THREADS ile başlat (Gunicorn/Render güvenliği)
 _background_threads_started = False
 
@@ -4027,9 +3363,6 @@ def start_background_services():
     if _background_threads_started:
         return
     _background_threads_started = True
-
-    alert_thread = Thread(target=check_for_big_earthquakes, daemon=True)
-    alert_thread.start()
 
     data_collection_thread = Thread(target=collect_training_data_continuously, daemon=True)
     data_collection_thread.start()

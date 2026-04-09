@@ -1,7 +1,7 @@
 import React from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/components/useColorScheme';
@@ -12,7 +12,7 @@ function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>['name'];
   color: string;
 }) {
-  return <FontAwesome size={22} style={{ marginBottom: -2 }} {...props} />;
+  return <FontAwesome size={20} style={{ marginBottom: -1 }} {...props} />;
 }
 
 export default function TabLayout() {
@@ -25,40 +25,51 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: useClientOnlyValue(false, true),
-        headerStyle: { backgroundColor: t.surface },
+        headerStyle: { backgroundColor: t.brandHeader },
         headerTintColor: t.text,
         headerTitleStyle: { fontWeight: '700', fontSize: 17 },
         headerShadowVisible: false,
         tabBarActiveTintColor: t.brandTab,
         tabBarInactiveTintColor: t.textMuted,
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '700', marginTop: 1 },
+        tabBarBackground: () => (
+          <View
+            style={{
+              flex: 1,
+              borderRadius: 30,
+              backgroundColor: t.tabBar,
+              borderWidth: 1,
+              borderColor: t.tabBarBorder,
+            }}
+          />
+        ),
         tabBarStyle: {
           position: 'absolute',
-          left: 14,
-          right: 14,
+          left: 18,
+          right: 18,
           bottom,
-          height: 58,
-          paddingTop: 6,
-          paddingBottom: 4,
-          borderRadius: 26,
+          height: 66,
+          paddingTop: 8,
+          paddingBottom: 6,
+          borderRadius: 30,
           borderTopWidth: 0,
-          backgroundColor: t.tabBar,
+          backgroundColor: 'transparent',
           ...Platform.select({
             ios: {
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: colorScheme === 'dark' ? 0.45 : 0.12,
-              shadowRadius: 12,
+              shadowColor: t.glowBlue,
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: colorScheme === 'dark' ? 0.22 : 0.16,
+              shadowRadius: 22,
             },
-            android: { elevation: 10 },
+            android: { elevation: 12 },
           }),
         },
-        tabBarItemStyle: { paddingVertical: 2 },
+        tabBarItemStyle: { paddingVertical: 2, borderRadius: 20 },
       }}>
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Canli',
+          title: 'Ana sayfa',
           headerShown: false,
           tabBarIcon: ({ color }) => <TabBarIcon name="heartbeat" color={color} />,
         }}
@@ -66,7 +77,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="forecast"
         options={{
-          title: 'Risk',
+          title: 'Uyarilar',
           tabBarIcon: ({ color }) => <TabBarIcon name="line-chart" color={color} />,
         }}
       />
@@ -78,17 +89,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="mesh"
-        options={{
-          title: 'Yakin Ag',
-          href: null,
-          tabBarIcon: ({ color }) => <TabBarIcon name="wifi" color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="messages"
         options={{
-          title: 'Mesaj',
+          title: 'Mesajlar',
           tabBarHideOnKeyboard: true,
           tabBarIcon: ({ color }) => <TabBarIcon name="comments" color={color} />,
         }}

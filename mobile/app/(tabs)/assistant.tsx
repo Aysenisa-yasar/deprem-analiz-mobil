@@ -11,10 +11,11 @@ import {
   View,
 } from 'react-native';
 
+import { CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, alpha } from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
-import { askChatbot } from '@/lib/api';
+import { askChatbot } from '@/services/assistantService';
 
 type Message = {
   id: string;
@@ -27,15 +28,15 @@ const STARTER_MESSAGES: Message[] = [
     id: 'intro',
     role: 'assistant',
     text:
-      'Deprem asistanina hos geldin. Risk, son depremler, hazirlik, acil durumda ne yapman gerektigi ve il bazli analizler konusunda yardimci olabilirim.',
+      'Deprem asistanına hoş geldin. Risk, son depremler, hazırlık, acil durumda ne yapman gerektiği ve il bazlı analizler konusunda yardımcı olabilirim.',
   },
 ];
 
 const SUGGESTIONS = [
-  'Istanbul deprem riski nedir?',
-  'Depremden sonra ilk 10 dakika ne yapmaliyim?',
-  'Acil durum cantasinda neler olmali?',
-  'Bulundugum bolgede son depremleri ozetle',
+  'İstanbul deprem riski nedir?',
+  'Depremden sonra ilk 10 dakika ne yapmalıyım?',
+  'Acil durum çantasında neler olmalı?',
+  'Bulunduğum bölgede son depremleri özetle',
 ];
 
 export default function AssistantScreen() {
@@ -67,7 +68,7 @@ export default function AssistantScreen() {
     try {
       reply = await askChatbot(apiBase, clean, sessionId.current);
     } catch {
-      reply = { ok: false, message: 'Asistan istegi tamamlanamadi.' };
+      reply = { ok: false, message: 'Asistan isteği tamamlanamadı.' };
     }
     setBusy(false);
 
@@ -76,106 +77,103 @@ export default function AssistantScreen() {
       {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        text: reply.ok && reply.reply ? reply.reply : 'Asistan su an yanit veremedi.',
+        text: reply.ok && reply.reply ? reply.reply : 'Asistan şu an yanıt veremedi.',
       },
     ]);
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.root, { backgroundColor: t.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        style={styles.list}
-        contentContainerStyle={styles.listPad}
-        ListHeaderComponent={
-          <View style={styles.headerWrap}>
-            <View style={[styles.hero, { backgroundColor: t.surface, borderColor: t.border }]}>
-              <View style={styles.heroTop}>
-                <FontAwesome name="magic" size={18} color={t.brandTab} />
-                <Text style={[styles.heroTitle, { color: t.text }]}>Deprem Asistani</Text>
-              </View>
-              <Text style={[styles.heroSub, { color: t.textSecondary }]}>
-                Ust seviye yonlendirme, hazirlik, il bazli risk sorulari ve acil durumda ne yapman
-                gerektigi icin hizli sohbet alani.
-              </Text>
-            </View>
-            <View style={styles.suggestionWrap}>
-              {SUGGESTIONS.map((item) => (
-                <Pressable
-                  key={item}
-                  onPress={() => void sendPrompt(item)}
-                  style={[styles.suggestionChip, { backgroundColor: t.surface, borderColor: t.border }]}>
-                  <Text style={[styles.suggestionText, { color: t.text }]}>{item}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const mine = item.role === 'user';
-          return (
-            <View
-              style={[
-                styles.messageBubble,
-                mine
-                  ? { alignSelf: 'flex-end', backgroundColor: t.accent }
-                  : { alignSelf: 'flex-start', backgroundColor: t.surface, borderColor: t.border, borderWidth: 1 },
-              ]}>
-              <Text style={[styles.messageRole, { color: mine ? 'rgba(255,255,255,0.9)' : t.textMuted }]}>
-                {mine ? 'Sen' : 'Asistan'}
-              </Text>
-              <Text style={[styles.messageText, { color: mine ? '#fff' : t.text }]}>{item.text}</Text>
-            </View>
-          );
-        }}
-      />
+    <View style={styles.root}>
+      <CosmicBackdrop t={t} />
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          contentContainerStyle={styles.listPad}
+          ListHeaderComponent={
+            <View style={styles.headerWrap}>
+              <GlassCard t={t} tone="cool" style={styles.hero}>
+                <CosmicLabel t={t}>ai briefing</CosmicLabel>
+                <View style={styles.heroTop}>
+                  <FontAwesome name="magic" size={18} color={t.brandTab} />
+                  <Text style={[styles.heroTitle, { color: t.text }]}>Deprem Asistanı</Text>
+                </View>
+                <Text style={[styles.heroSub, { color: t.textSecondary }]}>
+                  Risk özeti, hazırlık önerileri, il bazlı yorumlar ve acil durum yönlendirmesi için
+                  hızlı sohbet alanı.
+                </Text>
+              </GlassCard>
 
-      <View style={[styles.compose, { backgroundColor: t.surface, borderTopColor: t.border }]}>
-        <TextInput
-          value={input}
-          onChangeText={setInput}
-          placeholder="Deprem, risk, hazirlik veya acil durum sor..."
-          placeholderTextColor={t.textMuted}
-          multiline
-          style={[
-            styles.input,
-            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
-          ]}
+              <View style={styles.suggestionWrap}>
+                {SUGGESTIONS.map((item) => (
+                  <Pressable
+                    key={item}
+                    onPress={() => void sendPrompt(item)}
+                    style={[styles.suggestionChip, { backgroundColor: alpha(t.glowBlue, 0.10), borderColor: alpha(t.glowBlue, 0.20) }]}>
+                    <Text style={[styles.suggestionText, { color: t.text }]}>{item}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const mine = item.role === 'user';
+            return (
+              <View
+                style={[
+                  styles.messageBubble,
+                  mine
+                    ? { alignSelf: 'flex-end', backgroundColor: alpha(t.glowBlue, 0.18), borderColor: alpha(t.glowBlue, 0.28) }
+                    : { alignSelf: 'flex-start', backgroundColor: t.panel, borderColor: t.border },
+                ]}>
+                <Text style={[styles.messageRole, { color: mine ? '#dff6ff' : t.textMuted }]}>
+                  {mine ? 'Sen' : 'Asistan'}
+                </Text>
+                <Text style={[styles.messageText, { color: mine ? '#eef7ff' : t.textSecondary }]}>
+                  {item.text}
+                </Text>
+              </View>
+            );
+          }}
         />
-        <Pressable
-          onPress={() => void sendPrompt(input)}
-          disabled={busy}
-          style={({ pressed }) => [
-            styles.sendButton,
-            { backgroundColor: pressed || busy ? t.accentRipple : t.accent },
-          ]}>
-          <Text style={[styles.sendText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
-            {busy ? 'Bekle' : 'Sor'}
-          </Text>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+
+        <View style={[styles.compose, { backgroundColor: alpha(t.overlayStrong, 0.98), borderTopColor: t.border }]}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder="Deprem, risk, hazırlık veya acil durum sor..."
+            placeholderTextColor={t.textMuted}
+            multiline
+            style={[
+              styles.input,
+              { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+            ]}
+          />
+          <GlowButton
+            t={t}
+            label={busy ? 'Bekle...' : 'Sor'}
+            onPress={() => void sendPrompt(input)}
+            disabled={busy}
+          />
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 function makeStyles(t: ThemeTokens) {
   return StyleSheet.create({
-    root: { flex: 1 },
+    root: { flex: 1, backgroundColor: t.bg },
     list: { flex: 1 },
-    listPad: { padding: 16, paddingBottom: 120, gap: 12 },
+    listPad: { padding: 18, paddingBottom: 120, gap: 12 },
     headerWrap: { gap: 12, marginBottom: 12 },
-    hero: {
-      borderRadius: 22,
-      borderWidth: 1,
-      padding: 18,
-      gap: 10,
-    },
+    hero: { gap: 10 },
     heroTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    heroTitle: { fontSize: 22, fontWeight: '800' },
-    heroSub: { fontSize: 13, lineHeight: 19 },
+    heroTitle: { fontSize: 26, fontWeight: '800', fontFamily: t.displayFont },
+    heroSub: { fontSize: 14, lineHeight: 21 },
     suggestionWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     suggestionChip: {
       borderRadius: 999,
@@ -187,32 +185,27 @@ function makeStyles(t: ThemeTokens) {
     suggestionText: { fontSize: 12, fontWeight: '700' },
     messageBubble: {
       maxWidth: '88%',
-      borderRadius: 18,
+      borderRadius: 22,
+      borderWidth: 1,
       paddingHorizontal: 14,
       paddingVertical: 12,
       marginBottom: 10,
     },
     messageRole: { fontSize: 11, fontWeight: '700', marginBottom: 6 },
-    messageText: { fontSize: 15, lineHeight: 21 },
+    messageText: { fontSize: 15, lineHeight: 22 },
     compose: {
       borderTopWidth: 1,
       padding: 14,
-      gap: 8,
+      gap: 10,
     },
     input: {
       borderWidth: 1,
-      borderRadius: 14,
-      minHeight: 72,
+      borderRadius: 16,
+      minHeight: 82,
       textAlignVertical: 'top',
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
       fontSize: 15,
     },
-    sendButton: {
-      borderRadius: 14,
-      paddingVertical: 14,
-      alignItems: 'center',
-    },
-    sendText: { fontSize: 16, fontWeight: '800' },
   });
 }

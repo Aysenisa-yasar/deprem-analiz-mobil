@@ -1,7 +1,13 @@
 from functools import lru_cache
 
 from forecast.backtest import rolling_backtest
-from forecast.predictor import build_model_health, load_model, predict_with_model_data
+from forecast.geography import classify_turkey_region
+from forecast.predictor import (
+    build_model_health,
+    load_model,
+    predict_with_model_data,
+    validate_model_runtime,
+)
 from services.data_service import load_events
 
 
@@ -9,6 +15,26 @@ def _optional_float(value):
     if value is None:
         return None
     return float(value)
+
+
+def _window_probabilities(pred: dict) -> dict:
+    base_probability = float(pred.get("probability", 0.0) or 0.0)
+    m5_probability = float(pred.get("m5_72h_probability", 0.0) or 0.0)
+    return {
+        "6h": round(min(1.0, base_probability * 0.55), 4),
+        "24h": round(base_probability, 4),
+        "72h": round(min(1.0, max(base_probability * 1.18, m5_probability * 1.45)), 4),
+    }
+
+
+def _explanation_summary(advisory: dict, top_features: list[dict], region: str) -> str:
+    reasons = advisory.get("reasons") or []
+    if reasons:
+        return f"{region.replace('_', ' ').title()} bolgesi icin: {' '.join(reasons[:2])}"
+    if top_features:
+        names = ", ".join(str(item.get("feature") or item.get("name")) for item in top_features[:3])
+        return f"{region.replace('_', ' ').title()} bolgesinde en etkili sinyaller: {names}."
+    return f"{region.replace('_', ' ').title()} bolgesinde rutin izleme sinyali."
 
 
 def _warning_capability(model_health: dict | None) -> dict:
@@ -207,6 +233,7 @@ def forecast_point(
     lon: float,
     explain: bool = False,
     model_data: dict | None = None,
+    fast_mode: bool = False,
 ) -> dict:
     pred = predict_with_model_data(
         model_data if model_data is not None else load_model(),
@@ -214,10 +241,15 @@ def forecast_point(
         lat,
         lon,
         explain=explain,
+        fast_mode=fast_mode,
     )
     prob = pred["probability"]
     risk = min(10.0, max(0.0, prob * 10.0))
     advisory = _build_alert_advisory(pred)
+    model_health = pred.get("model_health", {})
+    region = classify_turkey_region(lat, lon)
+    windows = _window_probabilities(pred)
+    top_features = pred.get("top_features", [])
     return {
         "probability": float(prob),
         "ml_probability": float(pred.get("ml_probability", prob)),
@@ -235,14 +267,18 @@ def forecast_point(
         "next_event_time_window": pred.get("next_event_time_window"),
         "locality_score": float(pred.get("locality_score", 0.0)),
         "risk_score": round(risk, 2),
-        "model_health": pred.get("model_health", {}),
+        "model_health": model_health,
         "warning_capability": _warning_capability(pred.get("model_health")),
         "alert_advisory": advisory,
-        "top_features": pred.get("top_features", []),
+        "top_features": top_features,
         "features": pred.get("features", {}),
         "ensemble_weights": pred.get("ensemble_weights", {}),
         "signal_event_count": int(pred.get("signal_event_count", 0)),
         "model_type": pred.get("model_type", "forecast_hybrid_v3_timeseriescv"),
+        "region": region,
+        "confidence": float(model_health.get("quality_score", 0.0) or 0.0),
+        "time_windows": windows,
+        "explanation_summary": _explanation_summary(advisory, top_features, region),
         "fault_distance": float(pred.get("fault_distance", 999.0)),
         "fault_proximity_score": float(pred.get("fault_proximity_score", 0.0)),
         "stress_transfer": float(pred.get("stress_transfer", 0.0)),
@@ -260,6 +296,7 @@ def forecast_city(
     city: dict,
     explain: bool = False,
     model_data: dict | None = None,
+    fast_mode: bool = False,
 ) -> dict:
     return forecast_point(
         events,
@@ -267,6 +304,7 @@ def forecast_city(
         city["lon"],
         explain=explain,
         model_data=model_data,
+        fast_mode=fast_mode,
     )
 
 
@@ -276,7 +314,12 @@ def get_forecast_model_health(model_data: dict | None = None) -> dict:
         refreshed_backtest = _runtime_backtest_for_model(resolved_model.get("trained_at"))
         if refreshed_backtest:
             resolved_model["backtest"] = refreshed_backtest
-    return build_model_health(resolved_model)
+    runtime_compatible, runtime_issue = validate_model_runtime(resolved_model)
+    return build_model_health(
+        resolved_model,
+        runtime_compatible=runtime_compatible,
+        runtime_issue=runtime_issue,
+    )
 
 
 def get_warning_capability(model_data: dict | None = None) -> dict:

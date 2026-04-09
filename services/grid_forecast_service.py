@@ -1,3 +1,4 @@
+from forecast.geography import classify_turkey_region
 from forecast.grid import generate_turkey_grid
 from forecast.predictor import load_model, predict_with_model_data
 
@@ -8,18 +9,39 @@ def _optional_float(value):
     return float(value)
 
 
-def forecast_grid(events, step=0.5):
+def _window_probabilities(pred: dict) -> dict:
+    base_probability = float(pred.get("probability", 0.0) or 0.0)
+    m5_probability = float(pred.get("m5_72h_probability", 0.0) or 0.0)
+    short_window = min(1.0, base_probability * 0.55)
+    medium_window = base_probability
+    long_window = min(1.0, max(base_probability * 1.18, m5_probability * 1.45))
+    return {
+        "6h": round(short_window, 4),
+        "24h": round(medium_window, 4),
+        "72h": round(long_window, 4),
+    }
+
+
+def forecast_grid(events, step=0.5, horizon_hours=24):
     grid = generate_turkey_grid(step=step)
     model_data = load_model()
     results = []
     for p in grid:
-        pred = predict_with_model_data(model_data, events, p["lat"], p["lon"], explain=False)
+        pred = predict_with_model_data(model_data, events, p["lat"], p["lon"], explain=False, fast_mode=True)
         prob = pred["probability"]
+        windows = _window_probabilities(pred)
+        quality_score = float((pred.get("model_health") or {}).get("quality_score", 0.0) or 0.0)
+        selected_probability = windows["24h"]
+        if horizon_hours <= 6:
+            selected_probability = windows["6h"]
+        elif horizon_hours >= 72:
+            selected_probability = windows["72h"]
         results.append({
             "id": p["id"],
             "lat": p["lat"],
             "lon": p["lon"],
-            "probability": float(prob),
+            "region": p.get("region") or classify_turkey_region(p["lat"], p["lon"]),
+            "probability": float(selected_probability),
             "ml_probability": float(pred.get("ml_probability", prob)),
             "etas_probability": float(pred.get("etas_probability", 0.0)),
             "lstm_probability": float(pred.get("lstm_probability", 0.0)),
@@ -34,7 +56,10 @@ def forecast_grid(events, step=0.5):
             "next_event_magnitude_prediction": _optional_float(pred.get("next_event_magnitude_prediction")),
             "next_event_time_window": pred.get("next_event_time_window"),
             "locality_score": float(pred.get("locality_score", 0.0)),
-            "risk_score": float(prob * 10.0),
+            "risk_score": float(selected_probability * 10.0),
+            "time_windows": windows,
+            "confidence": round(quality_score, 4),
+            "confidence_opacity": round(min(1.0, max(0.18, quality_score)), 4),
             "top_features": pred.get("top_features", []),
             "features": pred.get("features", {}),
             "ensemble_weights": pred.get("ensemble_weights", {}),

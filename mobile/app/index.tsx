@@ -1,6 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { router } from 'expo-router';
-import type { ComponentProps } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -15,11 +14,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, alpha } from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
-import { useAuth } from '@/context/AuthContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
+import { useAuth } from '@/context/AuthContext';
+import {
+  confirmPasswordReset,
+  confirmRegister,
+  requestPasswordReset,
+  requestRegisterCode,
+} from '@/services/authService';
 
-type PasswordMode = 'login' | 'register';
+type PasswordMode = 'login' | 'register' | 'reset';
 
 export default function WelcomeScreen() {
   const colorScheme = useColorScheme();
@@ -27,11 +33,14 @@ export default function WelcomeScreen() {
   const t = theme[scheme];
   const styles = useMemo(() => makeStyles(t), [t]);
 
-  const { ready, token, login, register } = useAuth();
+  const { ready, token, login, completeLoginWithToken, apiBase } = useAuth();
 
   const [passwordMode, setPasswordMode] = useState<PasswordMode>('login');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [registerCode, setRegisterCode] = useState('');
+  const [resetCode, setResetCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -43,20 +52,91 @@ export default function WelcomeScreen() {
 
   const onPasswordSubmit = async () => {
     const usernameValue = username.trim();
+    const emailValue = email.trim();
     const passwordValue = password.trim();
 
-    if (!usernameValue || passwordValue.length < 4) {
+    if (passwordMode === 'register') {
+      if (!usernameValue || !emailValue || passwordValue.length < 4) {
+        setMessage('Kullanici adi, e-posta ve en az 4 karakterli sifre gir.');
+        return;
+      }
+    } else if (!usernameValue || (passwordMode !== 'reset' && passwordValue.length < 4)) {
       setMessage('Kullanici adi gir ve en az 4 karakterli sifre kullan.');
+      return;
+    }
+
+    if (passwordMode === 'reset' && resetCode.trim() && passwordValue.length < 4) {
+      setMessage('Yeni sifre en az 4 karakter olmali.');
       return;
     }
 
     setBusy(true);
     setMessage(null);
 
-    const result =
-      passwordMode === 'login'
-        ? await login(usernameValue, passwordValue)
-        : await register(usernameValue, passwordValue);
+    if (passwordMode === 'reset') {
+      if (!resetCode.trim()) {
+        const result = await requestPasswordReset(apiBase, usernameValue);
+        setBusy(false);
+        if (!result.ok) {
+          setMessage(result.message || 'Sifirlama kodu olusturulamadi.');
+          return;
+        }
+        setMessage(
+          result.debugCode
+            ? `Sifirlama kodu hazir. Gelisim kodu: ${result.debugCode}`
+            : 'Sifirlama kodu gonderildi. Kodu girip yeni sifreni belirle.'
+        );
+        return;
+      }
+
+      const result = await confirmPasswordReset(
+        apiBase,
+        usernameValue,
+        resetCode.trim(),
+        passwordValue
+      );
+      setBusy(false);
+      if (!result.ok || !result.token) {
+        setMessage(result.message || 'Sifre sifirlanamadi.');
+        return;
+      }
+      await completeLoginWithToken(result.token);
+      setPassword('');
+      setResetCode('');
+      router.replace('/(tabs)');
+      return;
+    }
+
+    if (passwordMode === 'register') {
+      if (!registerCode.trim()) {
+        const result = await requestRegisterCode(apiBase, usernameValue, emailValue, passwordValue);
+        setBusy(false);
+        if (!result.ok) {
+          setMessage(result.message || 'Kayit dogrulama kodu olusturulamadi.');
+          return;
+        }
+        setMessage(
+          result.debugCode
+            ? `Kayit kodu hazir. Gelisim kodu: ${result.debugCode}`
+            : 'Dogrulama kodu e-posta adresine gonderildi. Kodu girip kaydi tamamla.'
+        );
+        return;
+      }
+
+      const result = await confirmRegister(apiBase, emailValue, registerCode.trim());
+      setBusy(false);
+      if (!result.ok || !result.token) {
+        setMessage(result.message || 'Kayit tamamlanamadi.');
+        return;
+      }
+      await completeLoginWithToken(result.token);
+      setPassword('');
+      setRegisterCode('');
+      router.replace('/(tabs)');
+      return;
+    }
+
+    const result = await login(usernameValue, passwordValue);
 
     setBusy(false);
 
@@ -78,199 +158,243 @@ export default function WelcomeScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.root, { backgroundColor: t.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.scrollPad} showsVerticalScrollIndicator={false}>
-          <View style={[styles.hero, { backgroundColor: t.brandHeader }]}>
-            <View style={styles.heroBadge}>
-              <FontAwesome name="shield" size={18} color={t.brandOnHeader} />
-              <Text style={[styles.heroBadgeText, { color: t.brandOnHeader }]}>
-                Ust seviye deprem takip merkezi
+    <View style={styles.root}>
+      <CosmicBackdrop t={t} />
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <SafeAreaView style={styles.safe}>
+          <ScrollView contentContainerStyle={styles.scrollPad} showsVerticalScrollIndicator={false}>
+            <View style={styles.heroWrap}>
+              <CosmicLabel t={t}>risk intelligence</CosmicLabel>
+              <Text style={[styles.heroTitle, { color: t.text }]}>Deprem Risk Izleyici</Text>
+              <Text style={[styles.heroSub, { color: t.textSecondary }]}>
+                Deprem risklerini takip edin, acil uyarilari gorun ve kritik anlarda
+                yakinlariniza hizla ulasin.
               </Text>
             </View>
-            <Text style={[styles.heroTitle, { color: t.brandOnHeader }]}>
-              Erken uyarilar, 81 il risk haritasi, acil mesajlasma ve akilli asistan
-            </Text>
-            <Text style={[styles.heroSub, { color: t.brandOnHeader }]}>
-              Simdilik yalnizca kullanici adi ve sifre ile giris acik. Ag kaynakli hata riskini azaltmak
-              icin e-posta girisi kapatildi.
-            </Text>
-          </View>
 
-          <View style={styles.featureGrid}>
-            {FEATURES.map((feature) => (
-              <View
-                key={feature.title}
-                style={[styles.featureCard, { backgroundColor: t.surface, borderColor: t.border }]}>
-                <FontAwesome name={feature.icon} size={18} color={t.brandTab} />
-                <Text style={[styles.featureTitle, { color: t.text }]}>{feature.title}</Text>
-                <Text style={[styles.featureBody, { color: t.textSecondary }]}>{feature.body}</Text>
+            <GlassCard t={t} tone="cool" style={styles.formCard}>
+              <View style={styles.modeRow}>
+                {(['login', 'register', 'reset'] as const).map((item) => {
+                  const active = passwordMode === item;
+                  return (
+                    <Pressable
+                      key={item}
+                      onPress={() => setPasswordMode(item)}
+                      style={[
+                        styles.modeButton,
+                        {
+                          backgroundColor: active ? alpha(t.glowBlue, 0.16) : 'transparent',
+                          borderColor: active ? alpha(t.glowBlue, 0.28) : 'transparent',
+                        },
+                      ]}>
+                      <Text style={[styles.modeText, { color: active ? t.text : t.textMuted }]}>
+                        {item === 'login'
+                          ? 'Giris Yap'
+                          : item === 'register'
+                            ? 'Kayit Ol'
+                            : 'Sifre Sifirla'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            ))}
-          </View>
 
-          <View style={[styles.authCard, { backgroundColor: t.surface, borderColor: t.border }]}>
-            <View style={[styles.innerSwitch, { backgroundColor: t.surfaceMuted }]}>
-              {(['login', 'register'] as const).map((item) => {
-                const active = passwordMode === item;
-                return (
-                  <Pressable
-                    key={item}
-                    onPress={() => setPasswordMode(item)}
-                    style={[styles.modeButton, active && { backgroundColor: t.surface }]}>
-                    <Text style={[styles.modeText, { color: active ? t.text : t.textMuted }]}>
-                      {item === 'login' ? 'Giris yap' : 'Kayit ol'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+              <View style={styles.featureStrip}>
+                <View style={styles.featureRow}>
+                  <FontAwesome name="bolt" size={14} color={t.warn} />
+                  <Text style={[styles.featureText, { color: t.textSecondary }]}>
+                    Canli risk kartlari ve model ozeti
+                  </Text>
+                </View>
+                <View style={styles.featureRow}>
+                  <FontAwesome name="comments" size={14} color={t.brandTab} />
+                  <Text style={[styles.featureText, { color: t.textSecondary }]}>
+                    Acil mesajlar ve kayitli kisi akisi
+                  </Text>
+                </View>
+              </View>
 
-            <Text style={[styles.cardTitle, { color: t.text }]}>
-              {passwordMode === 'login' ? 'Hesabina giris yap' : 'Yeni hesap olustur'}
-            </Text>
-            <Text style={[styles.cardSub, { color: t.textSecondary }]}>
-              Uygulamayi stabil tutmak icin e-posta ve OTP girisi gecici olarak kapatildi.
-            </Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+                ]}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder={
+                  passwordMode === 'reset'
+                    ? 'Telefon numarasi veya e-posta'
+                    : passwordMode === 'register'
+                      ? 'Kullanici adi'
+                      : 'Telefon numarasi veya kullanici adi'
+                }
+                placeholderTextColor={t.textMuted}
+                value={username}
+                onChangeText={setUsername}
+              />
 
-            <TextInput
-              style={[
-                styles.input,
-                { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
-              ]}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="Kullanici adi"
-              placeholderTextColor={t.textMuted}
-              value={username}
-              onChangeText={setUsername}
-            />
-            <TextInput
-              style={[
-                styles.input,
-                { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
-              ]}
-              secureTextEntry
-              placeholder="Sifre"
-              placeholderTextColor={t.textMuted}
-              value={password}
-              onChangeText={setPassword}
-            />
+              {passwordMode === 'register' ? (
+                <TextInput
+                  style={[
+                    styles.input,
+                    { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+                  ]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  placeholder="E-posta adresi"
+                  placeholderTextColor={t.textMuted}
+                  value={email}
+                  onChangeText={setEmail}
+                />
+              ) : null}
 
-            <Pressable
-              onPress={() => void onPasswordSubmit()}
-              disabled={busy}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                { backgroundColor: pressed || busy ? t.accentRipple : t.accent },
-              ]}>
-              <Text style={[styles.primaryButtonText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
-                {passwordMode === 'login' ? 'Giris yap ve devam et' : 'Kayit ol ve devam et'}
-              </Text>
-            </Pressable>
+              <TextInput
+                style={[
+                  styles.input,
+                  { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+                ]}
+                secureTextEntry
+                placeholder={passwordMode === 'reset' ? 'Yeni parola' : 'Parola'}
+                placeholderTextColor={t.textMuted}
+                value={password}
+                onChangeText={setPassword}
+              />
 
-            {message ? (
-              <Text style={[styles.message, { color: t.textSecondary, backgroundColor: t.surfaceMuted }]}>
-                {message}
-              </Text>
-            ) : null}
+              {passwordMode === 'register' ? (
+                <TextInput
+                  style={[
+                    styles.input,
+                    { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+                  ]}
+                  placeholder="E-posta dogrulama kodu"
+                  placeholderTextColor={t.textMuted}
+                  keyboardType="number-pad"
+                  value={registerCode}
+                  onChangeText={setRegisterCode}
+                />
+              ) : null}
 
-            <Pressable onPress={() => router.replace('/(tabs)')} style={styles.secondaryButton}>
-              <Text style={[styles.secondaryButtonText, { color: t.brandTab }]}>
-                Misafir olarak devam et
-              </Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </KeyboardAvoidingView>
+              {passwordMode === 'reset' ? (
+                <TextInput
+                  style={[
+                    styles.input,
+                    { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+                  ]}
+                  placeholder="Dogrulama kodu"
+                  placeholderTextColor={t.textMuted}
+                  keyboardType="number-pad"
+                  value={resetCode}
+                  onChangeText={setResetCode}
+                />
+              ) : null}
+
+              <GlowButton
+                t={t}
+                label={
+                  passwordMode === 'login'
+                    ? busy
+                      ? 'Giris yapiliyor...'
+                      : 'Giris Yap'
+                    : passwordMode === 'register'
+                      ? busy
+                        ? 'Isleniyor...'
+                        : registerCode.trim()
+                          ? 'Kaydi Tamamla'
+                          : 'Kod Gonder'
+                      : busy
+                        ? 'Isleniyor...'
+                        : resetCode.trim()
+                          ? 'Sifreyi Yenile'
+                          : 'Kod Gonder'
+                }
+                onPress={() => void onPasswordSubmit()}
+                disabled={busy}
+                style={styles.submitButton}
+              />
+
+              {message ? (
+                <Text
+                  style={[
+                    styles.message,
+                    { color: t.textSecondary, backgroundColor: t.panelSoft },
+                  ]}>
+                  {message}
+                </Text>
+              ) : null}
+
+              <Pressable onPress={() => router.replace('/(tabs)')} style={styles.linkWrap}>
+                <Text style={[styles.linkText, { color: t.brandTab }]}>Misafir olarak devam et</Text>
+              </Pressable>
+            </GlassCard>
+          </ScrollView>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
-const FEATURES: {
-  icon: ComponentProps<typeof FontAwesome>['name'];
-  title: string;
-  body: string;
-}[] = [
-  {
-    icon: 'map-marker',
-    title: '81 il risk sinyali',
-    body: 'Turkiye genelinde il bazli risk siralamasi ve bulundugun konum icin kisa vadeli analiz.',
-  },
-  {
-    icon: 'bell',
-    title: 'Kisisel alarm mantigi',
-    body: 'Buyukluk ve mesafe esigine gore sana ozel sesli uyari akisi.',
-  },
-  {
-    icon: 'comments',
-    title: 'Acil yardim ve asistan',
-    body: 'Tek dokunusla durum gonder, bilgi al, deprem asistanindan yonlendirme iste.',
-  },
-];
-
 function makeStyles(t: ThemeTokens) {
   return StyleSheet.create({
-    root: { flex: 1 },
+    root: { flex: 1, backgroundColor: t.bg },
     safe: { flex: 1 },
     loadingRoot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    scrollPad: { padding: 18, paddingBottom: 36, gap: 18 },
-    hero: { borderRadius: 28, padding: 22, gap: 12 },
-    heroBadge: {
-      flexDirection: 'row',
+    scrollPad: {
+      flexGrow: 1,
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingTop: 32,
+      paddingBottom: 42,
+      gap: 24,
+    },
+    heroWrap: {
+      minHeight: 260,
+      justifyContent: 'center',
       alignItems: 'center',
-      gap: 8,
-      alignSelf: 'flex-start',
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: 'rgba(255,255,255,0.12)',
-    },
-    heroBadgeText: { fontSize: 12, fontWeight: '700' },
-    heroTitle: { fontSize: 28, fontWeight: '800', lineHeight: 34 },
-    heroSub: { fontSize: 14, lineHeight: 21, opacity: 0.94 },
-    featureGrid: { gap: 12 },
-    featureCard: {
-      borderRadius: 20,
-      borderWidth: 1,
-      padding: 16,
-      gap: 8,
-    },
-    featureTitle: { fontSize: 16, fontWeight: '800' },
-    featureBody: { fontSize: 13, lineHeight: 19 },
-    authCard: {
-      borderRadius: 24,
-      borderWidth: 1,
-      padding: 18,
       gap: 12,
+      paddingTop: 40,
     },
-    innerSwitch: {
+    heroTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.9, fontFamily: t.displayFont },
+    heroSub: { fontSize: 15, lineHeight: 24, textAlign: 'center', maxWidth: 310 },
+    formCard: { gap: 14, padding: 18 },
+    modeRow: {
       flexDirection: 'row',
-      borderRadius: 14,
+      gap: 8,
       padding: 4,
+      borderRadius: 16,
+      backgroundColor: alpha(t.glowBlue, 0.06),
     },
     modeButton: {
       flex: 1,
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderRadius: 12,
-    },
-    modeText: { fontSize: 14, fontWeight: '700' },
-    cardTitle: { fontSize: 22, fontWeight: '800' },
-    cardSub: { fontSize: 13, lineHeight: 19 },
-    input: {
       borderWidth: 1,
       borderRadius: 14,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
-      fontSize: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
     },
-    message: { borderRadius: 12, padding: 12, fontSize: 13, lineHeight: 18 },
-    primaryButton: { borderRadius: 16, alignItems: 'center', paddingVertical: 15 },
-    primaryButtonText: { fontSize: 16, fontWeight: '800' },
-    secondaryButton: { alignItems: 'center', paddingVertical: 12 },
-    secondaryButtonText: { fontSize: 14, fontWeight: '700' },
+    modeText: { fontSize: 14, fontWeight: '800', fontFamily: t.displayFont, textAlign: 'center' },
+    featureStrip: {
+      gap: 8,
+      borderRadius: 18,
+      padding: 14,
+      backgroundColor: alpha(t.glowOrange, 0.08),
+      borderWidth: 1,
+      borderColor: alpha(t.glowOrange, 0.16),
+    },
+    featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    featureText: { fontSize: 13, lineHeight: 18, flex: 1 },
+    input: {
+      minHeight: 56,
+      borderWidth: 1,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      fontSize: 16,
+    },
+    submitButton: { marginTop: 2 },
+    message: { borderRadius: 16, padding: 13, fontSize: 13, lineHeight: 19 },
+    linkWrap: { alignItems: 'center', paddingTop: 4 },
+    linkText: { fontSize: 14, fontWeight: '700' },
   });
 }

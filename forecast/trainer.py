@@ -1,6 +1,7 @@
 import os
 import sys
 import pickle
+import json
 from datetime import datetime
 
 import numpy as np
@@ -123,6 +124,58 @@ def _nanmean_or_none(values: np.ndarray):
     if not np.any(mask):
         return None
     return float(np.mean(values[mask]))
+
+
+def _version_tag(trained_at: str) -> str:
+    cleaned = (
+        trained_at.replace("-", "")
+        .replace(":", "")
+        .replace(".", "")
+        .replace("T", "_")
+        .replace("Z", "")
+    )
+    return f"forecast_{cleaned}"
+
+
+def _model_metadata(model_data: dict) -> dict:
+    return {
+        "version": model_data.get("version")
+        or _version_tag(str(model_data.get("trained_at") or datetime.utcnow().isoformat() + "Z")),
+        "trained_at": model_data.get("trained_at"),
+        "model_type": model_data.get("model_type"),
+        "feature_order": model_data.get("feature_order", []),
+        "metrics": model_data.get("metrics", {}),
+        "targets": model_data.get("targets", {}),
+        "calibration": model_data.get("calibration", {}),
+        "backtest": model_data.get("backtest", {}),
+        "feature_importance": model_data.get("feature_importance", []),
+    }
+
+
+def _save_model_artifacts(model_data: dict) -> dict:
+    os.makedirs(os.path.dirname(FORECAST_MODEL), exist_ok=True)
+    with open(FORECAST_MODEL, "wb") as f:
+        pickle.dump(model_data, f)
+
+    metadata = _model_metadata(model_data)
+    version = metadata["version"]
+    model_dir = os.path.dirname(FORECAST_MODEL)
+    versioned_model_path = os.path.join(model_dir, f"{version}.pkl")
+    metadata_path = os.path.join(model_dir, f"{version}.json")
+    latest_metadata_path = os.path.join(model_dir, "forecast_latest.json")
+
+    with open(versioned_model_path, "wb") as f:
+        pickle.dump(model_data, f)
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    with open(latest_metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return {
+        "latest_model_path": FORECAST_MODEL,
+        "versioned_model_path": versioned_model_path,
+        "metadata_path": metadata_path,
+        "latest_metadata_path": latest_metadata_path,
+    }
 
 
 def train_forecast(events: list, time_window_hours: int = 48) -> dict:
@@ -336,10 +389,10 @@ def train_forecast(events: list, time_window_hours: int = 48) -> dict:
         "backtest": backtest,
         "feature_importance": feature_importance[:10],
     }
+    model_data["version"] = _version_tag(model_data["trained_at"])
 
-    os.makedirs(os.path.dirname(FORECAST_MODEL), exist_ok=True)
-    with open(FORECAST_MODEL, "wb") as f:
-        pickle.dump(model_data, f)
+    artifact_paths = _save_model_artifacts(model_data)
+    model_data["artifacts"] = artifact_paths
 
     print("[forecast] ROC-AUC mean:", model_data["metrics"]["roc_auc_mean"])
     print("[forecast] PR-AUC mean:", model_data["metrics"]["pr_auc_mean"])
@@ -347,6 +400,7 @@ def train_forecast(events: list, time_window_hours: int = 48) -> dict:
     print("[forecast] Backtest recall:", model_data["backtest"]["hit_rate"])
     print("[forecast] Backtest precision:", model_data["backtest"]["precision"])
     print("[forecast] Model kaydedildi:", FORECAST_MODEL)
+    print("[forecast] Metadata kaydedildi:", artifact_paths["metadata_path"])
 
     return model_data
 

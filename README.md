@@ -1,196 +1,105 @@
 # DepremAnaliz
 
-Hybrid spatio-temporal earthquake forecasting prototype for Turkey.
+Turkiye icin modern mobil deprem risk izleme, son deprem haritasi, il bazli risk arama ve acil mesajlasma odakli tam yigin proje.
 
-This project combines machine learning, ETAS-like scoring, clustering, b-value analysis, sequence heuristics, graph neural networks, explainability, and grid-based forecasting into a single research-oriented pipeline.
+## Mevcut Durum
 
-## What It Does
+- Mobil uygulama: Expo + React Native + Expo Router
+- Backend: Flask tabanli v2 API
+- Kalici veri tabani: SQLite (`data/mobile_social.db`)
+- Haritalar: siyah etiketli acik tema, kirmizi / sari / yesil risk vurgusu
+- Il bazli risk arama: aktif
+- Son deprem haritasi: aktif
+- Offline mesaj kuyrugu: aktif
+- Mesh, WhatsApp ve Twilio kalintilari: projeden temizlendi
 
-- Fuses seismic data from Kandilli, USGS, and optional AFAD sources
-- Builds short-horizon earthquake risk forecasts over cities and geographic grid cells
-- Uses a hybrid ensemble of XGBoost, ETAS-like scoring, cluster analysis, b-value risk, LSTM-style sequence signal, and optional GNN signal
-- Computes SHAP-based local explanations and global feature importance
-- Stores rolling evaluation, calibration, and backtest summaries for model inspection
+## Dogrulanan Veri ve Model Durumu
 
-## Current Forecast Stack
+- Yerel katalog: `earthquake_history.json`
+- Normalize edilen olay sayisi: `26419`
+- Risk kayitlari / cihaz verisi / mesajlasma verisi SQLite icinde kalici tutulur
+- Son model metadata dosyasi: `models/forecast_latest.json`
+- Model surumu: `forecast_20260405_161650154366`
+- Egitim tarihi: `2026-04-05T16:16:50.154366Z`
+- ROC-AUC ortalamasi: `0.663`
+- PR-AUC ortalamasi: `0.295`
+- Ornek sayisi: `26121`
 
-- Primary target: `m4_24h`
-- Auxiliary targets: `m5_72h`, `max_mag_7d`
-- Main model: calibrated XGBoost classifier
-- Auxiliary models: calibrated XGBoost classifier + XGBoost regressor
-- Spatial model: PyTorch Geometric based GNN
-- Explainability: SHAP
+Bu sistem resmi saniyeler-once deprem erken uyari altyapisinin yerine gecmez. Urettigi cikti, kisa vadeli bolgesel risk ve hazirlik sinyalidir.
 
-## v2 API
+## Mimari
 
-- `GET /api/v2/forecast-map`
-- `GET /api/v2/forecast-grid`
-- `GET /api/v2/recent-earthquakes` (son depremler, mobil izleme)
-- `GET /api/v2/forecast-metrics`
-- `GET /api/v2/feature-importance`
-- `POST /api/mobile/register` | `login` | `me` | `messages` | `emergency-contact` | `location-alert`
+- `app/`, `routes/`, `services/`: Flask API ve is kurallari
+- `forecast/`: tahmin, ozellik cikarma, model saglik metrikleri
+- `mobile/`: Android/iOS istemcisi
+- `models/`: egitilmis model ve metadata
+- `data/`: kalici uygulama verisi
 
-## Project Structure
+## Yerel Calistirma
+
+### Backend
+
+```powershell
+py -3.11 run.py
+```
+
+Varsayilan gelistirme adresi:
 
 ```text
-forecast/                  core forecasting pipeline
-forecast/gnn/              graph dataset, model, trainer, predictor
-services/                  application service layer
-routes/                    Flask v2 routes + mobil API
-mobile/                    Expo (React Native) uygulama
-models/                    saved models
-data/                      local data assets including fault geometry
-app.py                     Flask app with legacy compatibility routes
+http://127.0.0.1:5000
 ```
 
-## Installation
+Android emulatorunde mobil uygulama bu adrese `10.0.2.2:5000` uzerinden baglanir.
 
-```bash
-pip install -r requirements.txt
-```
+### Mobil
 
-Optional GNN dependencies:
-
-```bash
-pip install torch torch-geometric
-```
-
-## Training
-
-Train the hybrid forecast model:
-
-```bash
-python forecast/trainer.py
-```
-
-Train the optional GNN model:
-
-```bash
-python forecast/gnn/trainer.py
-```
-
-Run the application:
-
-```bash
-python app.py
-```
-
-Mobil istemci (Expo SDK 54):
-
-```bash
+```powershell
 cd mobile
 npm install
-npx expo start
+npx expo start --dev-client
 ```
 
-`mobile/app.json` içindeki `extra.apiUrl` veya `EXPO_PUBLIC_API_URL` ile Flask sunucu adresini ayarlayın (ör. `http://192.168.1.x:5000`).
+Android icin hazir komut:
 
-## Forecast Outputs
+```powershell
+cd mobile
+.\start-android-dev-client.cmd
+```
 
-The saved forecast model includes:
+## Onemli API Uclari
 
-- Time-series cross-validation metrics
-- Calibration curve data
-- Rolling backtest summary
-- Global feature importance
-- Auxiliary target configuration
+- `GET /api/health`
+- `GET /api/v2/forecast-map`
+- `GET /api/v2/forecast-grid`
+- `GET /api/v2/forecast-location`
+- `GET /api/v2/recent-earthquakes`
+- `GET /api/v2/forecast-model-status`
+- `POST /api/mobile/register`
+- `POST /api/mobile/login`
+- `GET /api/mobile/me`
+- `POST /api/mobile/messages`
 
-City and grid forecast responses include:
+## Kalite Notlari
 
-- Final probability
-- ML / ETAS / LSTM / cluster / b-risk / GNN components
-- `m5_72h_probability`
-- `max_mag_7d_prediction`
-- `time_to_next_event_hours_prediction`
-- `next_event_distance_km_prediction`
-- `next_event_magnitude_prediction`
-- `next_event_time_window`
-- Fault proximity features
-- SHAP top features for city-level explainable forecasts
+- Mobil acilisinda API adresi erisilebilirlik testinden gecirilir.
+- Ag hatalari kullaniciya ham `Network request failed` yerine anlamli mesaj olarak gosterilir.
+- Forecast map ve grid ilk yanitta daha hizli calissin diye overview yolu optimize edildi.
+- `data/mobile_social.db` cihaz tarafi sosyal/veri kayitlarini kalici olarak tutar.
 
-## Toward Date-Specific Event Forecasting
+## Test ve Dogrulama
 
-If you want outputs closer to "the most likely next event is around this date, near this area, with this magnitude range", the project needs to move from pointwise risk scoring to calibrated spatio-temporal event forecasting.
+Gecen dogrulamalar:
 
-The important scientific constraint is that this should still be treated as a probabilistic forecast, not a deterministic claim that a specific earthquake will definitely happen at an exact time and place.
+```powershell
+cd mobile
+npx tsc --noEmit
+```
 
-### Recommended Upgrade Path
+```powershell
+$env:PYTHONPATH='C:\Users\LENOVO\OneDrive\Masaüstü\DepremAnaliz-main - Kopya;C:\Users\LENOVO\OneDrive\Masaüstü\DepremAnaliz-main - Kopya\.pydeps'
+py -3.11 -m pytest -q tests/test_health_api.py tests/test_mobile_auth_api.py tests/test_forecast_api.py tests/test_admin_api.py
+```
 
-1. Redefine the targets
-   - Keep the current `m4_24h` / `m5_72h` labels, but add event-level targets such as:
-   - `time_to_next_event_hours`
-   - `next_event_distance_km`
-   - `next_event_magnitude`
-   - grid-cell or fault-segment labels for the most likely next event location
-
-2. Build a true spatio-temporal training set
-   - Generate training examples for every forecast issue time and grid cell, not only for a single query point.
-   - Keep strict chronological splits and rolling backtests to avoid leakage from the future.
-   - Expand the historical catalog so rare larger events are represented better.
-
-3. Predict distributions instead of exact point values
-   - Add a survival / hazard model for event timing.
-   - Add a spatial model over grid cells or fault segments.
-   - Add quantile models for magnitude and lead time so the system can return uncertainty bands instead of false precision.
-
-4. Add richer geophysical inputs
-   - The current stack is mostly seismic-catalog driven.
-   - To narrow time and location windows, add stronger physical signals when available:
-   - fault geometry and slip-rate priors
-   - GNSS / InSAR deformation proxies
-   - station-level waveform summaries or swarm-quality indicators
-   - catalog quality flags and completeness indicators
-
-5. Change the API output format
-   - Instead of a single risk score, return ranked scenarios:
-   - top candidate cells / cities
-   - most likely time window
-   - likely magnitude interval
-   - calibrated probability / uncertainty
-
-6. Evaluate the right metrics
-   - Keep ROC-AUC / PR-AUC / Brier for event occurrence.
-   - Add event-aware metrics such as recall@top-k cells, lead-time error, calibration error, and interval coverage for time / magnitude forecasts.
-
-### Repo Touch Points
-
-The main implementation work in this repository would be:
-
-- `forecast/multi_targets.py`: add next-event time, distance, magnitude, and location targets
-- `forecast/trainer.py`: train timing + spatial + magnitude heads with time-series cross-validation
-- `forecast/predictor.py`: return ranked event scenarios instead of only one local risk probability
-- `services/forecast_service.py` and `services/grid_forecast_service.py`: expose scenario-oriented results
-- `routes/forecast_routes.py` and `routes/metrics_routes.py`: publish new forecast and evaluation endpoints
-
-## Research Directions
-
-Planned or partially implemented upgrades:
-
-- Real LSTM / GRU training instead of heuristic sequence scoring
-- Stronger spatio-temporal GNN with richer node and edge features
-- Survival / hazard modeling for time-to-next-event estimation
-- Geodetic deformation inputs and richer physical priors
-- Calibration plots and benchmarking figures
-- Higher-resolution grid forecasting
-- Paper-ready evaluation reports
-
-## Important Note
-
-This project is a research and engineering prototype. It does not provide deterministic earthquake prediction. Outputs should be interpreted as short-term probabilistic risk estimates, not official warnings.
-
-For scientific context, see the U.S. Geological Survey FAQ on earthquake prediction and earthquake forecasting.
-
-## License
+## Lisans
 
 MIT
-
-## Local Model Backend (Windows)
-
-Yerelde egitilmis modeli acmak icin:
-
-```bat
-launch_backend_model.cmd
-```
-
-Bu komut `models/forecast_latest.pkl` ile Flask backend'i baslatir.
-Mobil gelistirmede `.env` icindeki `EXPO_PUBLIC_API_URL` degeri bu yerel backend'i gosterebilir.

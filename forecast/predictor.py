@@ -1,5 +1,6 @@
 import os
 import pickle
+from functools import lru_cache
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from forecast.explain import explain_prediction
 from forecast.features import extract_features, haversine_km
 from forecast.gnn.predict import predict_gnn
 from forecast.lstm_model import predict_lstm_sequence
+from services.model_artifact_service import load_forecast_metadata
 
 MODEL_TYPE = "forecast_hybrid_v3_timeseriescv"
 
@@ -36,15 +38,32 @@ FEATURE_ORDER = [
     "depth_variance",
 ]
 
-
+@lru_cache(maxsize=1)
 def load_model():
     if not os.path.exists(FORECAST_MODEL):
         return None
     try:
         with open(FORECAST_MODEL, "rb") as f:
-            return pickle.load(f)
+            model_data = pickle.load(f)
     except Exception:
         return None
+    metadata = load_forecast_metadata()
+    if isinstance(model_data, dict) and metadata:
+        for key in (
+            "version",
+            "trained_at",
+            "model_type",
+            "feature_order",
+            "metrics",
+            "targets",
+            "backtest",
+            "feature_importance",
+        ):
+            if key not in model_data or model_data.get(key) in (None, {}, []):
+                value = metadata.get(key)
+                if value not in (None, {}, []):
+                    model_data[key] = value
+    return model_data
 
 
 def _sorted_events(events: list) -> list:
@@ -80,6 +99,71 @@ def _mean_score(values: list[float]) -> float:
     return float(np.mean(finite))
 
 
+def _sigmoid(value: float) -> float:
+    clipped = max(min(float(value), 60.0), -60.0)
+    return float(1.0 / (1.0 + np.exp(-clipped)))
+
+
+def _reshape_output(output) -> np.ndarray:
+    values = np.asarray(output, dtype=np.float64)
+    if values.ndim == 0:
+        return values.reshape(1)
+    return values
+
+
+def _safe_predict_probability(model, X: np.ndarray) -> tuple[float | None, str | None]:
+    if model is None:
+        return None, "model_missing"
+
+    if hasattr(model, "predict_proba"):
+        try:
+            proba = _reshape_output(model.predict_proba(X))
+            if proba.ndim >= 2 and proba.shape[1] >= 2:
+                return _clamp01(float(proba[0, 1])), None
+            flattened = proba.reshape(-1)
+            if flattened.size:
+                return _clamp01(float(flattened[0])), None
+        except Exception as exc:
+            issue = str(exc).strip() or exc.__class__.__name__
+        else:
+            issue = None
+    else:
+        issue = None
+
+    if hasattr(model, "decision_function"):
+        try:
+            decision = _reshape_output(model.decision_function(X)).reshape(-1)
+            if decision.size:
+                return _sigmoid(float(decision[0])), issue
+        except Exception as exc:
+            issue = str(exc).strip() or exc.__class__.__name__
+
+    if hasattr(model, "predict"):
+        try:
+            prediction = _reshape_output(model.predict(X)).reshape(-1)
+            if prediction.size:
+                value = float(prediction[0])
+                if 0.0 <= value <= 1.0:
+                    return _clamp01(value), issue
+                return _sigmoid(value), issue
+        except Exception as exc:
+            issue = str(exc).strip() or exc.__class__.__name__
+
+    return None, issue or "probability_unavailable"
+
+
+def validate_model_runtime(model_data: dict | None) -> tuple[bool, str | None]:
+    if not model_data or "model" not in model_data:
+        return False, "model_missing"
+
+    feature_order = model_data.get("feature_order") or FEATURE_ORDER
+    sample = np.zeros((1, len(feature_order)), dtype=np.float64)
+    probability, issue = _safe_predict_probability(model_data.get("model"), sample)
+    if probability is None:
+        return False, issue
+    return True, None
+
+
 def _quality_level(score: float) -> str:
     if score >= 0.72:
         return "high"
@@ -93,10 +177,17 @@ def _quality_label(level: str) -> str:
         return "Yuksek guven"
     if level == "medium":
         return "Orta guven"
+    if level == "fallback":
+        return "Fallback"
     return "Deneysel"
 
 
-def build_model_health(model_data: dict | None, signal_event_count: int | None = None) -> dict:
+def build_model_health(
+    model_data: dict | None,
+    signal_event_count: int | None = None,
+    runtime_compatible: bool | None = None,
+    runtime_issue: str | None = None,
+) -> dict:
     if not model_data or "model" not in model_data:
         return {
             "available": False,
@@ -109,6 +200,25 @@ def build_model_health(model_data: dict | None, signal_event_count: int | None =
             "metrics": {},
             "backtest": {},
             "signal_event_count": int(signal_event_count or 0),
+        }
+
+    if runtime_compatible is False:
+        issue = (runtime_issue or "model_runtime_issue").strip()
+        return {
+            "available": False,
+            "quality_level": "fallback",
+            "quality_label": "Fallback",
+            "quality_score": 0.0,
+            "trained_at": model_data.get("trained_at"),
+            "model_type": model_data.get("model_type", MODEL_TYPE),
+            "summary": (
+                "Yuklu model artefakti bu ortamda guvenli skor uretemedi. "
+                "Uygulama bu durumda sezgisel fallback risk hesabina doner."
+            ),
+            "metrics": model_data.get("metrics") or {},
+            "backtest": model_data.get("backtest") or {},
+            "signal_event_count": int(signal_event_count or 0),
+            "runtime_issue": issue[:240],
         }
 
     metrics = model_data.get("metrics") or {}
@@ -307,6 +417,34 @@ def _build_signal_bundle(events: list, lat: float, lon: float) -> dict:
     }
 
 
+def _build_fast_signal_bundle(features: dict) -> dict:
+    recent_6h = int(features.get("recent_6h_count", 0) or 0)
+    recent_24h = int(features.get("recent_24h_count", 0) or 0)
+    count = int(features.get("count", 0) or 0)
+    swarm_ratio = _clamp01(float(features.get("swarm_ratio", 0.0) or 0.0))
+    fault_score = _clamp01(float(features.get("fault_proximity_score", 0.0) or 0.0))
+    stress_score = _clamp01(float(features.get("stress_transfer", 0.0) or 0.0))
+    density_score = _clamp01(float(features.get("spatial_density", 0.0) or 0.0) / 6.0)
+    max_mag_score = _clamp01(float(features.get("max_mag", 0.0) or 0.0) / 6.0)
+    mag_trend_score = _clamp01((float(features.get("mag_trend", 0.0) or 0.0) + 2.0) / 4.0)
+
+    signal_event_count = max(recent_24h, min(count, 24))
+    cluster_score = _clamp01(0.50 * swarm_ratio + 0.25 * _clamp01(recent_6h / 8.0) + 0.25 * density_score)
+    b_value = float(max(0.7, min(1.3, 1.18 - 0.18 * _clamp01(signal_event_count / 18.0) - 0.08 * max_mag_score)))
+    b_risk = _clamp01(1.2 - b_value)
+    lstm_prob = _clamp01(0.55 * swarm_ratio + 0.25 * _clamp01(recent_6h / 10.0) + 0.20 * mag_trend_score)
+    gnn_prob = _clamp01(0.45 * fault_score + 0.30 * stress_score + 0.25 * density_score)
+
+    return {
+        "cluster_score": float(cluster_score),
+        "b_value": float(b_value),
+        "b_risk": float(b_risk),
+        "lstm_probability": float(lstm_prob),
+        "gnn_probability": float(gnn_prob),
+        "signal_event_count": int(signal_event_count),
+    }
+
+
 def _dynamic_weights(features: dict) -> dict:
     weights = {
         "ml": 0.40,
@@ -372,10 +510,8 @@ def _predict_auxiliary_targets(model_data: dict, X: np.ndarray) -> dict:
 
     m5_model = aux_models.get("m5_72h")
     if m5_model is not None:
-        try:
-            predictions["m5_72h_probability"] = float(m5_model.predict_proba(X)[0, 1])
-        except Exception:
-            predictions["m5_72h_probability"] = 0.0
+        probability, _ = _safe_predict_probability(m5_model, X)
+        predictions["m5_72h_probability"] = float(probability or 0.0)
 
     max_mag_model = aux_models.get("max_mag_7d")
     if max_mag_model is not None:
@@ -418,6 +554,59 @@ def _predict_auxiliary_targets(model_data: dict, X: np.ndarray) -> dict:
     return predictions
 
 
+def _heuristic_prediction(
+    model_data: dict | None,
+    feats: dict,
+    signals: dict,
+    etas_prob: float,
+    locality_score: float,
+    runtime_issue: str | None = None,
+) -> dict:
+    model_health = build_model_health(
+        model_data,
+        signal_event_count=signals["signal_event_count"],
+        runtime_compatible=False if runtime_issue else None,
+        runtime_issue=runtime_issue,
+    )
+    fallback_prob = _clamp01(
+        0.50 * etas_prob
+        + 0.25 * signals["cluster_score"]
+        + 0.25 * locality_score
+    )
+    return {
+        "probability": fallback_prob,
+        "ml_probability": 0.0,
+        "etas_probability": etas_prob,
+        "lstm_probability": float(signals["lstm_probability"]),
+        "cluster_score": float(signals["cluster_score"]),
+        "b_value": float(signals["b_value"]),
+        "b_risk": float(signals["b_risk"]),
+        "gnn_probability": float(signals["gnn_probability"]),
+        "m5_72h_probability": 0.0,
+        "max_mag_7d_prediction": 0.0,
+        "time_to_next_event_hours_prediction": None,
+        "next_event_distance_km_prediction": None,
+        "next_event_magnitude_prediction": None,
+        "next_event_time_window": None,
+        "locality_score": float(locality_score),
+        "ensemble_weights": _dynamic_weights(feats),
+        "signal_event_count": int(signals["signal_event_count"]),
+        "model_health": model_health,
+        "features": feats,
+        "top_features": [],
+        "model_type": "forecast_runtime_fallback" if runtime_issue else "no_forecast_model",
+        "fault_distance": float(feats.get("fault_distance", 999.0)),
+        "fault_proximity_score": float(feats.get("fault_proximity_score", 0.0)),
+        "stress_transfer": float(feats.get("stress_transfer", 0.0)),
+        "energy_release": float(feats.get("energy_release", 0.0)),
+        "foreshock_count": int(feats.get("foreshock_count", 0)),
+        "spatial_density": float(feats.get("spatial_density", 0.0)),
+        "mag_trend": float(feats.get("mag_trend", 0.0)),
+        "depth_variance": float(feats.get("depth_variance", 0.0)),
+        "nearest_fault_segment": feats.get("nearest_fault_segment", "unknown"),
+    }
+
+
 def predict_with_model_data(
     model_data: dict | None,
     events: list,
@@ -425,57 +614,35 @@ def predict_with_model_data(
     lon: float,
     time_window_hours: int = 48,
     explain: bool = False,
+    fast_mode: bool = False,
 ) -> dict:
     feats = extract_features(events, lat, lon, time_window_hours=time_window_hours)
     X = np.array([[feats.get(key, 0) for key in FEATURE_ORDER]], dtype=np.float64)
-    signals = _build_signal_bundle(events, lat, lon)
+    signals = _build_fast_signal_bundle(feats) if fast_mode else _build_signal_bundle(events, lat, lon)
     etas_prob = float(etas_like_score(feats))
     locality_score = _locality_score(feats, signals)
 
     if not model_data or "model" not in model_data:
-        model_health = build_model_health(model_data, signal_event_count=signals["signal_event_count"])
-        fallback_prob = _clamp01(
-            0.50 * etas_prob
-            + 0.25 * signals["cluster_score"]
-            + 0.25 * locality_score
-        )
-        return {
-            "probability": fallback_prob,
-            "ml_probability": 0.0,
-            "etas_probability": etas_prob,
-            "lstm_probability": float(signals["lstm_probability"]),
-            "cluster_score": float(signals["cluster_score"]),
-            "b_value": float(signals["b_value"]),
-            "b_risk": float(signals["b_risk"]),
-            "gnn_probability": float(signals["gnn_probability"]),
-            "m5_72h_probability": 0.0,
-            "max_mag_7d_prediction": 0.0,
-            "time_to_next_event_hours_prediction": None,
-            "next_event_distance_km_prediction": None,
-            "next_event_magnitude_prediction": None,
-            "next_event_time_window": None,
-            "locality_score": float(locality_score),
-            "ensemble_weights": _dynamic_weights(feats),
-            "signal_event_count": int(signals["signal_event_count"]),
-            "model_health": model_health,
-            "features": feats,
-            "top_features": [],
-            "model_type": "no_forecast_model",
-            "fault_distance": float(feats.get("fault_distance", 999.0)),
-            "fault_proximity_score": float(feats.get("fault_proximity_score", 0.0)),
-            "stress_transfer": float(feats.get("stress_transfer", 0.0)),
-            "energy_release": float(feats.get("energy_release", 0.0)),
-            "foreshock_count": int(feats.get("foreshock_count", 0)),
-            "spatial_density": float(feats.get("spatial_density", 0.0)),
-            "mag_trend": float(feats.get("mag_trend", 0.0)),
-            "depth_variance": float(feats.get("depth_variance", 0.0)),
-            "nearest_fault_segment": feats.get("nearest_fault_segment", "unknown"),
-        }
+        return _heuristic_prediction(model_data, feats, signals, etas_prob, locality_score)
 
-    ml_prob = float(model_data["model"].predict_proba(X)[0, 1])
+    ml_prob, runtime_issue = _safe_predict_probability(model_data.get("model"), X)
+    if ml_prob is None:
+        return _heuristic_prediction(
+            model_data,
+            feats,
+            signals,
+            etas_prob,
+            locality_score,
+            runtime_issue=runtime_issue,
+        )
+
     aux_predictions = _predict_auxiliary_targets(model_data, X)
     weights = _dynamic_weights(feats)
-    model_health = build_model_health(model_data, signal_event_count=signals["signal_event_count"])
+    model_health = build_model_health(
+        model_data,
+        signal_event_count=signals["signal_event_count"],
+        runtime_compatible=True,
+    )
 
     final_prob = (
         weights["ml"] * ml_prob

@@ -12,7 +12,17 @@ _GNN_CACHE = {
 }
 
 
+def _gnn_runtime_enabled() -> bool:
+    flag = os.getenv("ENABLE_GNN_RUNTIME")
+    if flag is not None:
+        return flag.strip().lower() in {"1", "true", "yes", "on"}
+    return os.name != "nt"
+
+
 def _load_runtime():
+    if not _gnn_runtime_enabled():
+        return None, None, None
+
     try:
         import torch
 

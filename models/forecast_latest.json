@@ -1,0 +1,178 @@
+{
+  "version": "forecast_20260405_161650154366",
+  "trained_at": "2026-04-05T16:16:50.154366Z",
+  "model_type": "forecast_hybrid_v3_timeseriescv",
+  "feature_order": [
+    "count",
+    "max_mag",
+    "mean_mag",
+    "mag_std",
+    "min_distance",
+    "mean_distance",
+    "recency_energy",
+    "mean_depth",
+    "recent_6h_count",
+    "recent_24h_count",
+    "swarm_ratio",
+    "fault_distance",
+    "fault_proximity_score",
+    "stress_transfer",
+    "energy_release",
+    "foreshock_count",
+    "spatial_density",
+    "mag_trend",
+    "depth_variance"
+  ],
+  "metrics": {
+    "roc_auc_mean": 0.6626934316843404,
+    "roc_auc_std": 0.33535356007169176,
+    "pr_auc_mean": 0.29464896833994847,
+    "pr_auc_std": 0.35641076240970754,
+    "brier_mean": 0.047312872562386796,
+    "brier_std": 0.04720728548116771,
+    "samples": 26121,
+    "positive_rate": 0.09888595383025152,
+    "m5_72h_positive_rate": 0.044829830404655255,
+    "max_mag_7d_mean": 1.4181846024271656,
+    "next_event_within_7d_rate": 0.35909804371961257,
+    "time_to_next_event_hours_mean": 34.911998058030434,
+    "time_to_next_event_hours_rmse_mean": 46.61909164317092,
+    "time_to_next_event_hours_mae_mean": 37.806464176195014,
+    "next_event_distance_km_mean": 36.576568864209996,
+    "next_event_distance_km_rmse_mean": 26.06716880466282,
+    "next_event_distance_km_mae_mean": 20.637276687587566,
+    "next_event_magnitude_mean": 3.534882729211087,
+    "next_event_magnitude_rmse_mean": 0.49929204355835577,
+    "next_event_magnitude_mae_mean": 0.33687641795006057,
+    "folds": 5
+  },
+  "targets": {
+    "primary": "m4_24h",
+    "auxiliary": [
+      "m5_72h",
+      "max_mag_7d",
+      "time_to_next_event_hours",
+      "next_event_distance_km",
+      "next_event_magnitude"
+    ],
+    "radius_km": 100,
+    "horizons_hours": {
+      "m4_24h": 24,
+      "m5_72h": 72,
+      "max_mag_7d": 168,
+      "time_to_next_event_hours": 168.0
+    },
+    "event_scenario": {
+      "conditional_targets": [
+        "time_to_next_event_hours",
+        "next_event_distance_km",
+        "next_event_magnitude"
+      ],
+      "window_hours": 168.0
+    }
+  },
+  "calibration": {
+    "prob_true": [
+      0.018785151856018,
+      0.15443522654754308,
+      0.22948328267477203,
+      0.37719298245614036,
+      0.6896551724137931,
+      0.8070652173913043,
+      0.8368794326241135,
+      0.9481865284974094,
+      0.0
+    ],
+    "prob_pred": [
+      0.05751930788640987,
+      0.1389993140057799,
+      0.2436946768580848,
+      0.3454807435667457,
+      0.45256977500830425,
+      0.5478536993437244,
+      0.6503959339746135,
+      0.7178610466382048,
+      0.8128416538238525
+    ],
+    "bins": 10
+  },
+  "backtest": {
+    "mean_prob": 0.24757602383022975,
+    "hit_rate": 0.5700970873786407,
+    "accuracy": 0.9545558958652374,
+    "precision": 0.9483204134366925,
+    "recall": 0.5700970873786407,
+    "f1": 0.7121028377395101,
+    "specificity": 0.9966022510087067,
+    "balanced_accuracy": 0.7833496691936737,
+    "positive_rate": 0.09858346094946402,
+    "alarm_rate": 0.05926493108728943,
+    "top_decile_precision": 0.753062787136294,
+    "top_decile_recall": 0.763883495145631,
+    "samples": 26120,
+    "threshold": 0.5,
+    "hit_rate_definition": "recall"
+  },
+  "feature_importance": [
+    {
+      "feature": "energy_release",
+      "importance": 768.9890747070312,
+      "name": "energy_release",
+      "value": 768.9890747070312
+    },
+    {
+      "feature": "recency_energy",
+      "importance": 138.09011840820312,
+      "name": "recency_energy",
+      "value": 138.09011840820312
+    },
+    {
+      "feature": "spatial_density",
+      "importance": 127.39505767822266,
+      "name": "spatial_density",
+      "value": 127.39505767822266
+    },
+    {
+      "feature": "count",
+      "importance": 68.67997741699219,
+      "name": "count",
+      "value": 68.67997741699219
+    },
+    {
+      "feature": "max_mag",
+      "importance": 49.5726203918457,
+      "name": "max_mag",
+      "value": 49.5726203918457
+    },
+    {
+      "feature": "recent_6h_count",
+      "importance": 43.32705307006836,
+      "name": "recent_6h_count",
+      "value": 43.32705307006836
+    },
+    {
+      "feature": "recent_24h_count",
+      "importance": 42.59165573120117,
+      "name": "recent_24h_count",
+      "value": 42.59165573120117
+    },
+    {
+      "feature": "mean_depth",
+      "importance": 16.505142211914062,
+      "name": "mean_depth",
+      "value": 16.505142211914062
+    },
+    {
+      "feature": "mean_distance",
+      "importance": 13.66214656829834,
+      "name": "mean_distance",
+      "value": 13.66214656829834
+    },
+    {
+      "feature": "stress_transfer",
+      "importance": 11.641129493713379,
+      "name": "stress_transfer",
+      "value": 11.641129493713379
+    }
+  ]
+}

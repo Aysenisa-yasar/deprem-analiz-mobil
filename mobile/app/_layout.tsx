@@ -4,14 +4,12 @@ import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { useEffect, useState } from 'react';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import { AlertPreferencesProvider } from '@/context/AlertPreferencesContext';
-import { AuthProvider } from '@/context/AuthContext';
-import { MeshProvider } from '@/context/MeshContext';
 import { QuakeMonitorBoot } from '@/components/QuakeMonitorBoot';
+import { AlertPreferencesProvider } from '@/context/AlertPreferencesContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 
 declare global {
   var __DA_FETCH_GUARD_INSTALLED__: boolean | undefined;
@@ -25,9 +23,6 @@ export {
 export const unstable_settings = {
   initialRouteName: 'index',
 };
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
 
 function installFetchGuard() {
   if (globalThis.__DA_FETCH_GUARD_INSTALLED__ || typeof globalThis.fetch !== 'function') {
@@ -75,21 +70,37 @@ export default function RootLayout() {
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     ...FontAwesome.font,
   });
+  const [fontGateTimedOut, setFontGateTimedOut] = useState(false);
 
   installFetchGuard();
 
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setFontGateTimedOut(true);
+    }, 3000);
+
+    return () => clearTimeout(timeout);
+  }, []);
+
   // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
-    if (error) throw error;
+    if (error) {
+      console.error('[startup] Font loading failed, continuing without custom fonts.', error);
+      setFontGateTimedOut(true);
+    }
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
+    const timeout = setTimeout(() => {
+      void SplashScreen.hideAsync().catch((hideError) => {
+        console.error('[startup] SplashScreen.hideAsync failed.', hideError);
+      });
+    }, 500);
 
-  if (!loaded) {
+    return () => clearTimeout(timeout);
+  }, []);
+
+  if (!loaded && !fontGateTimedOut) {
     return null;
   }
 
@@ -102,18 +113,26 @@ function RootLayoutNav() {
   return (
     <AuthProvider>
       <AlertPreferencesProvider>
-        <MeshProvider>
-          <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-            <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-            <QuakeMonitorBoot />
-            <Stack>
-              <Stack.Screen name="index" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-            </Stack>
-          </ThemeProvider>
-        </MeshProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          <BackgroundServices />
+          <Stack>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          </Stack>
+        </ThemeProvider>
       </AlertPreferencesProvider>
     </AuthProvider>
   );
+}
+
+function BackgroundServices() {
+  const { ready, token } = useAuth();
+
+  if (!ready || !token) {
+    return null;
+  }
+
+  return <QuakeMonitorBoot />;
 }

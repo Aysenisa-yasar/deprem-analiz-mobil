@@ -1,75 +1,102 @@
-import { useFocusEffect } from '@react-navigation/native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
-  Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { QuakeMap } from '@/components/QuakeMap';
+import { AvatarOrb, CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, MiniBars, alpha } from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
+import { theme, riskAccent, type ThemeTokens } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
-import { theme, type ThemeTokens } from '@/constants/theme';
-import { fetchRecentQuakes, haversineKm, type QuakeEvent } from '@/lib/api';
-import { getSafeDeviceLocation } from '@/lib/location';
 import {
-  countBuckets,
-  filterQuakes,
-  formatCoordShort,
-  formatQuakeDateTime,
-  magBucketColor,
-  relativeTimeTr,
-} from '@/lib/quakeFormat';
+  fetchForecastMap,
+  fetchRecentQuakes,
+  haversineKm,
+  type ForecastPoint,
+  type QuakeEvent,
+} from '@/lib/api';
+import { formatQuakeDateTime, relativeTimeTr } from '@/lib/quakeFormat';
 
-type TimeFilter = 'all' | '24h' | '7d';
+function normalizeRiskScore(value?: number | null): number {
+  if (value == null) return 0;
+  return value <= 1 ? value : value / 10;
+}
 
-export default function DepremlerScreen() {
+function findIstanbulPoint(points: ForecastPoint[]): ForecastPoint | null {
+  return (
+    points.find((point) => point.city.toLocaleLowerCase('tr-TR').includes('istanbul')) ||
+    points[0] ||
+    null
+  );
+}
+
+function buildTrendBars(events: QuakeEvent[]) {
+  const sample = events.slice(0, 7).reverse();
+  if (!sample.length) return [0.22, -0.12, 0.28, -0.08, 0.34, 0.18, 0.42];
+  const average = sample.reduce((sum, item) => sum + item.mag, 0) / sample.length;
+  return sample.map((item, index) => {
+    const centered = item.mag - average;
+    return centered + (index % 2 === 0 ? 0.12 : -0.05);
+  });
+}
+
+function insightLines(point: ForecastPoint | null, nearbyCount: number): string[] {
+  if (point?.alert_advisory?.reasons?.length) {
+    return point.alert_advisory.reasons.slice(0, 3);
+  }
+  const lines = [
+    nearbyCount > 0
+      ? `Son 24 saatte yakın bölgede ${nearbyCount} sismik olay öne çıktı.`
+      : 'Son 24 saat içinde ciddi yoğunluk görünmüyor.',
+  ];
+  if (point?.signal_event_count != null) {
+    lines.push(`Sinyal event sayısı ${point.signal_event_count} ile dikkat çekiyor.`);
+  }
+  if (point?.fault_distance != null) {
+    lines.push(`Fay hattına tahmini uzaklık ${point.fault_distance.toFixed(0)} km.`);
+  }
+  return lines;
+}
+
+export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const scheme = colorScheme === 'dark' ? 'dark' : 'light';
   const t = theme[scheme];
   const styles = useMemo(() => makeStyles(t), [t]);
+  const { apiBase, ready, user } = useAuth();
 
-  const { apiBase, ready } = useAuth();
-  const [raw, setRaw] = useState<QuakeEvent[]>([]);
-  const [query, setQuery] = useState('');
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
-  const [view, setView] = useState<'list' | 'map'>('list');
+  const [quakes, setQuakes] = useState<QuakeEvent[]>([]);
+  const [forecast, setForecast] = useState<ForecastPoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const [userLoc, setUserLoc] = useState<{ lat: number; lon: number } | null>(null);
-
-  const maxAgeSec = timeFilter === 'all' ? null : timeFilter === '24h' ? 86_400 : 604_800;
-
-  const timeFiltered = useMemo(
-    () => filterQuakes(raw, '', maxAgeSec),
-    [raw, maxAgeSec]
-  );
-  const displayed = useMemo(
-    () => filterQuakes(timeFiltered, query, null),
-    [timeFiltered, query]
-  );
-  const buckets = useMemo(() => countBuckets(timeFiltered), [timeFiltered]);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!ready) return;
-    setErr(null);
     setLoading(true);
+    setError(null);
     try {
-      const ev = await fetchRecentQuakes(apiBase, 120);
-      setRaw(ev);
-      setUpdatedAt(Math.floor(Date.now() / 1000));
+      const [quakeResult, forecastResult] = await Promise.all([
+        fetchRecentQuakes(apiBase, 60),
+        fetchForecastMap(apiBase),
+      ]);
+      setQuakes(quakeResult);
+      setForecast(forecastResult);
+      if (!quakeResult.length && !forecastResult.length) {
+        setError('Canlı veri alınamadı. API adresini ve backend durumunu kontrol et.');
+      }
     } catch {
-      setErr('Liste alınamadı. Ağ ve API adresini kontrol edin.');
-      setRaw([]);
+      setQuakes([]);
+      setForecast([]);
+      setError('Veri akışı şu an alınamadı. Yenileyip tekrar deneyebilirsin.');
     } finally {
       setLoading(false);
     }
@@ -78,382 +105,296 @@ export default function DepremlerScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!ready) return;
-      load();
-    }, [ready, load])
+      void load();
+    }, [load, ready])
   );
 
-  useEffect(() => {
-    if (!ready) return;
-    let alive = true;
-    (async () => {
-      const result = await getSafeDeviceLocation({ requestPermission: false, accuracy: 1 });
-      if (alive && result.ok) setUserLoc({ lat: result.lat, lon: result.lon });
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [ready]);
+  const focusPoint = useMemo(() => findIstanbulPoint(forecast), [forecast]);
+  const lastQuake = quakes[0] ?? null;
+  const focusAccent = riskAccent(scheme, focusPoint?.risk_level, focusPoint?.risk_score);
+  const normalizedRisk = normalizeRiskScore(focusPoint?.risk_score);
+  const confidencePct = Math.round((focusPoint?.probability ?? 0.62) * 100);
+  const trendBars = useMemo(() => buildTrendBars(quakes), [quakes]);
+  const nearbyCount = useMemo(() => {
+    if (!focusPoint) return 0;
+    return quakes.filter((item) => {
+      const distance = haversineKm(focusPoint.lat, focusPoint.lon, item.lat, item.lon);
+      const ageHours = (Date.now() / 1000 - item.timestamp) / 3600;
+      return distance <= 180 && ageHours <= 24;
+    }).length;
+  }, [focusPoint, quakes]);
+
+  const trendLabel =
+    focusPoint?.alert_advisory?.label ||
+    (normalizedRisk >= 0.72 ? 'Yükseliyor' : normalizedRisk >= 0.46 ? 'İzleniyor' : 'Sakin');
+  const trendIcon = normalizedRisk >= 0.72 ? 'arrow-up' : normalizedRisk >= 0.46 ? 'signal' : 'check';
+  const insight = insightLines(focusPoint, nearbyCount);
 
   if (!ready) {
     return (
-      <View style={[styles.center, { backgroundColor: t.bg }]}>
+      <View style={[styles.loadingRoot, { backgroundColor: t.bg }]}>
         <ActivityIndicator size="large" color={t.brandTab} />
       </View>
     );
   }
 
-  const updateLabel =
-    updatedAt != null
-      ? new Date(updatedAt * 1000).toLocaleTimeString('tr-TR', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })
-      : '—';
-
   return (
-    <View style={[styles.root, { backgroundColor: t.bg }]}>
-      <SafeAreaView edges={['top']} style={[styles.headerBlock, { backgroundColor: t.brandHeader }]}>
-        <View style={styles.headerTop}>
-          <Text style={[styles.headerTitle, { color: t.brandOnHeader }]}>Depremler</Text>
-          <Pressable
-            onPress={load}
-            style={[styles.iconBtn, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
-            hitSlop={8}>
-            <FontAwesome name="refresh" size={18} color={t.brandOnHeader} />
-          </Pressable>
-        </View>
-        <View
-          style={[
-            styles.searchWrap,
-            { backgroundColor: scheme === 'dark' ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.22)' },
-          ]}>
-          <FontAwesome name="search" size={16} color="rgba(255,255,255,0.85)" />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Konum veya M büyüklüğü ara…"
-            placeholderTextColor="rgba(255,255,255,0.65)"
-            style={[styles.searchInput, { color: t.brandOnHeader }]}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {query.length > 0 ? (
-            <Pressable onPress={() => setQuery('')} hitSlop={8}>
-              <FontAwesome name="times-circle" size={18} color="rgba(255,255,255,0.8)" />
-            </Pressable>
-          ) : null}
-        </View>
-        <View style={styles.liveRow}>
-          <FontAwesome name="heartbeat" size={14} color={t.brandOnHeader} />
-          <Text style={[styles.liveText, { color: t.brandOnHeader }]}>Türkiye ve çevresi</Text>
-          <View style={styles.liveDot} />
-          <Text style={[styles.liveSub, { color: t.brandOnHeader }]}>Canlı özet</Text>
-        </View>
-      </SafeAreaView>
-
-      <View style={[styles.summary, { backgroundColor: t.surface }]}>
-        <View style={styles.summaryHead}>
-          <Text style={[styles.summaryTitle, { color: t.text }]}>Son depremler</Text>
-          <Text style={[styles.summarySub, { color: t.textSecondary }]}>Güncel özet</Text>
-        </View>
-        <View style={styles.buckets}>
-          <View style={[styles.bucket, { backgroundColor: scheme === 'dark' ? '#7f1d1d' : '#fecaca' }]}>
-            <Text style={[styles.bucketNum, { color: scheme === 'dark' ? '#fecaca' : '#991b1b' }]}>
-              {buckets.high}
-            </Text>
-            <Text style={[styles.bucketLbl, { color: scheme === 'dark' ? '#fca5a5' : '#7f1d1d' }]}>M 4.0+</Text>
-          </View>
-          <View style={[styles.bucket, { backgroundColor: scheme === 'dark' ? '#9a3412' : '#fed7aa' }]}>
-            <Text style={[styles.bucketNum, { color: scheme === 'dark' ? '#ffedd5' : '#9a3412' }]}>
-              {buckets.mid}
-            </Text>
-            <Text style={[styles.bucketLbl, { color: scheme === 'dark' ? '#fdba74' : '#c2410c' }]}>
-              M 2.0–3.9
-            </Text>
-          </View>
-          <View style={[styles.bucket, { backgroundColor: scheme === 'dark' ? '#a16207' : '#fef9c3' }]}>
-            <Text style={[styles.bucketNum, { color: scheme === 'dark' ? '#fef08a' : '#854d0e' }]}>
-              {buckets.low}
-            </Text>
-            <Text style={[styles.bucketLbl, { color: scheme === 'dark' ? '#fde047' : '#a16207' }]}>M &lt; 2</Text>
-          </View>
-        </View>
-        <Text style={[styles.updateFoot, { color: t.textMuted }]}>
-          Son güncelleme: {updateLabel}
-        </Text>
-      </View>
-
-      <View style={styles.toolbar}>
-        <View style={[styles.segment, { backgroundColor: t.surfaceMuted }]}>
-          <Pressable
-            onPress={() => setView('list')}
-            style={[styles.segBtn, view === 'list' && { backgroundColor: t.surface }]}>
-            <FontAwesome
-              name="list-ul"
-              size={16}
-              color={view === 'list' ? t.brandTab : t.textMuted}
-            />
-            <Text
-              style={[
-                styles.segLabel,
-                { color: view === 'list' ? t.text : t.textMuted },
-                view === 'list' && { fontWeight: '800' },
-              ]}>
-              Liste
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setView('map')}
-            style={[styles.segBtn, view === 'map' && { backgroundColor: t.surface }]}>
-            <FontAwesome name="map" size={16} color={view === 'map' ? t.brandTab : t.textMuted} />
-            <Text
-              style={[
-                styles.segLabel,
-                { color: view === 'map' ? t.text : t.textMuted },
-                view === 'map' && { fontWeight: '800' },
-              ]}>
-              Harita
-            </Text>
-          </Pressable>
-        </View>
-        <View style={[styles.chips, { backgroundColor: t.surfaceMuted }]}>
-          {(['all', '24h', '7d'] as const).map((k) => (
-            <Pressable
-              key={k}
-              onPress={() => setTimeFilter(k)}
-              style={[
-                styles.chip,
-                timeFilter === k && styles.chipOn,
-                timeFilter === k && { backgroundColor: t.brandHeader },
-              ]}>
-              <Text
-                style={[
-                  styles.chipTxt,
-                  { color: timeFilter === k ? t.brandOnHeader : t.textSecondary },
-                ]}>
-                {k === 'all' ? 'Hepsi' : k === '24h' ? '24 saat' : '7 gün'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      {err ? (
-        <View style={[styles.bannerErr, { borderColor: t.danger, backgroundColor: t.surface }]}>
-          <Text style={[styles.errText, { color: t.danger }]}>{err}</Text>
-        </View>
-      ) : null}
-
-      {view === 'map' ? (
-        <View style={styles.mapShell}>
-          <QuakeMap events={displayed} scheme={scheme} t={t} />
-          <View
-            style={[
-              styles.mapBadge,
-              { backgroundColor: t.glassOverlay },
-            ]}>
-            <Text style={{ color: t.text, fontWeight: '700' }}>{displayed.length} deprem</Text>
-          </View>
-        </View>
-      ) : (
-        <FlatList
-          data={displayed}
-          keyExtractor={(i) => i.event_key}
-          removeClippedSubviews={Platform.OS === 'android'}
-          windowSize={8}
-          contentContainerStyle={styles.listPad}
+    <View style={styles.root}>
+      <CosmicBackdrop t={t} />
+      <SafeAreaView style={styles.safe}>
+        <ScrollView
+          contentContainerStyle={styles.scrollPad}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={loading}
-              onRefresh={load}
+              onRefresh={() => void load()}
               tintColor={t.brandTab}
               colors={[t.brandTab]}
             />
-          }
-          ListEmptyComponent={
-            loading ? (
-              <ActivityIndicator style={styles.pad} color={t.brandTab} />
-            ) : (
-              <Text style={[styles.empty, { color: t.textSecondary }]}>Kayıt bulunamadı.</Text>
-            )
-          }
-          renderItem={({ item }) => {
-            const ring = magBucketColor(item.mag, scheme);
-            const distKm =
-              userLoc != null
-                ? haversineKm(userLoc.lat, userLoc.lon, item.lat, item.lon)
-                : null;
-            return (
-              <View
-                style={[
-                  styles.qCard,
-                  {
-                    backgroundColor: t.listCard,
-                    borderColor: t.border,
-                  },
-                ]}>
-                <View style={[styles.magCircle, { borderColor: ring }]}>
-                  <Text style={[styles.magVal, { color: ring }]}>{item.mag.toFixed(1)}</Text>
-                  <Text style={[styles.magUnit, { color: t.textMuted }]}>Ml</Text>
-                </View>
-                <View style={styles.qBody}>
-                  <Text style={[styles.qPlace, { color: t.text }]} numberOfLines={2}>
-                    {formatCoordShort(item.lat, item.lon)}
-                  </Text>
-                  <View style={styles.qRow}>
-                    <FontAwesome name="clock-o" size={13} color={t.textMuted} />
-                    <Text style={[styles.qMeta, { color: t.textSecondary }]}>
-                      {formatQuakeDateTime(item.timestamp)} · {relativeTimeTr(item.timestamp)}
-                    </Text>
-                  </View>
-                  <View style={styles.qRow}>
-                    <FontAwesome name="arrow-down" size={13} color={t.textMuted} />
-                    <Text style={[styles.qMeta, { color: t.textSecondary }]}>
-                      {item.depth.toFixed(1)} km derinlik
-                    </Text>
-                  </View>
-                  {distKm != null ? (
-                    <View style={styles.qRow}>
-                      <FontAwesome name="location-arrow" size={13} color={t.textMuted} />
-                      <Text style={[styles.qMeta, { color: t.textSecondary }]}>
-                        Sizden ~{distKm.toFixed(0)} km
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-                <FontAwesome name="chevron-right" size={14} color={t.textMuted} />
+          }>
+          <View style={styles.topRow}>
+            <View style={styles.topLeft}>
+              <Pressable
+                onPress={() => router.push('/(tabs)/forecast')}
+                style={[styles.topChip, { backgroundColor: alpha(t.glowBlue, 0.14), borderColor: alpha(t.glowBlue, 0.24) }]}>
+                <FontAwesome name="th-large" size={15} color={t.brandTab} />
+              </Pressable>
+              <View style={[styles.topChip, { backgroundColor: alpha(t.glowBlue, 0.08), borderColor: alpha(t.glowBlue, 0.18), flexDirection: 'row', gap: 8 }]}>
+                <View style={[styles.dot, { backgroundColor: t.glowBlue }]} />
+                <View style={[styles.dot, { backgroundColor: alpha(t.textMuted, 0.6) }]} />
               </View>
-            );
-          }}
-        />
-      )}
+            </View>
+            <AvatarOrb
+              t={t}
+              size={42}
+              label={(user?.username?.slice(0, 2) || 'DA').toUpperCase()}
+            />
+          </View>
+
+          <GlassCard t={t} tone="warm" style={styles.heroCard}>
+            <CosmicLabel t={t} accent={focusAccent}>
+              canlı risk paneli
+            </CosmicLabel>
+            <Text style={[styles.heroTitle, { color: t.text }]}>
+              {focusPoint?.city || 'İstanbul'} Risk Durumu
+            </Text>
+
+            <View style={styles.metricRow}>
+              <Text style={[styles.metricLabel, { color: t.textSecondary }]}>Risk Skoru</Text>
+              <View style={styles.metricValueRow}>
+                <Text style={[styles.metricValue, { color: focusAccent }]}>
+                  {focusPoint ? normalizedRisk.toFixed(2) : '--'}
+                </Text>
+                <FontAwesome name="fire" size={20} color={focusAccent} />
+              </View>
+            </View>
+
+            <View style={styles.metricRow}>
+              <Text style={[styles.metricLabel, { color: t.textSecondary }]}>Trend</Text>
+              <View style={styles.metricValueRow}>
+                <Text style={[styles.metricSubValue, { color: focusAccent }]}>{trendLabel}</Text>
+                <FontAwesome name={trendIcon} size={16} color={focusAccent} />
+              </View>
+            </View>
+
+            <View style={styles.metricRow}>
+              <Text style={[styles.metricLabel, { color: t.textSecondary }]}>Güven</Text>
+              <Text style={[styles.metricSubValue, { color: t.mid }]}>
+                %{confidencePct} {confidencePct >= 70 ? 'Güçlü' : confidencePct >= 45 ? 'Orta' : 'Temkinli'}
+              </Text>
+            </View>
+
+            <MiniBars
+              t={t}
+              values={trendBars}
+              style={styles.trendBars}
+              positiveColor={alpha(t.glowBlue, 0.88)}
+              negativeColor={alpha(t.glowOrange, 0.86)}
+            />
+
+            <GlassCard t={t} tone="cool" style={styles.innerCard}>
+              <Text style={[styles.innerTitle, { color: t.text }]}>Model Diyor Ki:</Text>
+              {insight.map((line) => (
+                <Text key={line} style={[styles.innerCopy, { color: t.textSecondary }]}>
+                  {line}
+                </Text>
+              ))}
+            </GlassCard>
+          </GlassCard>
+
+          <GlassCard t={t} style={styles.quakeCard}>
+            <View style={styles.quakeTop}>
+              <Text style={[styles.cardTitle, { color: t.text }]}>Son Deprem</Text>
+              <View style={styles.metricValueRow}>
+                <FontAwesome name="map-marker" size={16} color={t.danger} />
+                <Text style={[styles.quakeMag, { color: t.text }]}>
+                  {lastQuake ? `M ${lastQuake.mag.toFixed(1)}` : 'Veri yok'}
+                </Text>
+              </View>
+            </View>
+            <MiniBars
+              t={t}
+              values={trendBars.map((value) => value * 0.84)}
+              style={styles.quakeTrend}
+              positiveColor={alpha(t.glowBlue, 0.82)}
+              negativeColor={alpha(t.glowOrange, 0.72)}
+            />
+            <Text style={[styles.quakeMeta, { color: t.textSecondary }]}>
+              {lastQuake
+                ? `${lastQuake.depth.toFixed(0)} km derinlik • ${relativeTimeTr(lastQuake.timestamp)}`
+                : 'Henüz son deprem verisi alınamadı.'}
+            </Text>
+            <View style={styles.detailRow}>
+              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Yakın Fay Mesafesi</Text>
+              <Text style={[styles.detailValue, { color: t.warn }]}>
+                {focusPoint?.fault_distance != null ? `${focusPoint.fault_distance.toFixed(0)} km` : '--'}
+              </Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Son Güncelleme</Text>
+              <Text style={[styles.detailCaption, { color: t.textMuted }]}>
+                {lastQuake ? formatQuakeDateTime(lastQuake.timestamp) : 'Bekleniyor'}
+              </Text>
+            </View>
+          </GlassCard>
+
+          <View style={styles.actionRow}>
+            <GlowButton
+              t={t}
+              label="Son Depremler"
+              onPress={() => router.push('/(tabs)/forecast')}
+              trailing={<FontAwesome name="line-chart" size={15} color="#eef7ff" />}
+              style={styles.actionButton}
+            />
+            <GlowButton
+              t={t}
+              label="Acil Mesajlar"
+              tone="orange"
+              onPress={() => router.push('/(tabs)/messages')}
+              trailing={<FontAwesome name="comments" size={15} color="#eef7ff" />}
+              style={styles.actionButton}
+            />
+          </View>
+
+          <GlassCard t={t} tone="cool" style={styles.feedCard}>
+            <View style={styles.feedHead}>
+              <View>
+                <Text style={[styles.cardTitle, { color: t.text }]}>Canlı Akış</Text>
+                <Text style={[styles.feedSub, { color: t.textSecondary }]}>
+                  Son 24 saatte öne çıkan sismik hareketler
+                </Text>
+              </View>
+              <CosmicLabel t={t}>{nearbyCount} yakın sinyal</CosmicLabel>
+            </View>
+
+            {(quakes.slice(0, 3).length ? quakes.slice(0, 3) : FALLBACK_ITEMS).map((item, index) => {
+              const isFallback = 'title' in item;
+              const title = isFallback
+                ? item.title
+                : `M${item.mag.toFixed(1)} • ${item.depth.toFixed(0)} km derinlik`;
+              const subtitle = isFallback
+                ? item.subtitle
+                : `${relativeTimeTr(item.timestamp)} • ${item.lat.toFixed(2)}, ${item.lon.toFixed(2)}`;
+              const accent = isFallback
+                ? index === 0
+                  ? t.glowOrange
+                  : t.glowBlue
+                : riskAccent(scheme, undefined, item.mag / 5);
+
+              return (
+                <View key={isFallback ? item.title : item.event_key} style={styles.feedRow}>
+                  <View style={[styles.feedDot, { backgroundColor: accent }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.feedTitle, { color: t.text }]}>{title}</Text>
+                    <Text style={[styles.feedText, { color: t.textSecondary }]}>{subtitle}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </GlassCard>
+
+          {error ? (
+            <Text style={[styles.errorText, { color: t.danger }]}>{error}</Text>
+          ) : null}
+        </ScrollView>
+      </SafeAreaView>
     </View>
   );
 }
 
+const FALLBACK_ITEMS = [
+  { title: 'Risk verisi yükleniyor', subtitle: 'Sunucudan yeni tahminler bekleniyor.' },
+  { title: 'Aktivite penceresi hazırlanıyor', subtitle: 'İlk veri geldikçe kartlar canlı dolacak.' },
+];
+
 function makeStyles(t: ThemeTokens) {
   return StyleSheet.create({
-    root: { flex: 1 },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    headerBlock: { paddingHorizontal: 16, paddingBottom: 14 },
-    headerTop: {
+    root: { flex: 1, backgroundColor: t.bg },
+    safe: { flex: 1 },
+    loadingRoot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    scrollPad: { padding: 18, paddingBottom: 118, gap: 16 },
+    topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    topLeft: { flexDirection: 'row', gap: 10 },
+    topChip: {
+      minHeight: 38,
+      minWidth: 56,
+      borderRadius: 14,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+    },
+    dot: { width: 8, height: 8, borderRadius: 999 },
+    heroCard: { padding: 18, gap: 12 },
+    heroTitle: { fontSize: 32, fontWeight: '800', lineHeight: 38, fontFamily: t.displayFont },
+    metricRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 12,
+      paddingTop: 4,
+      paddingBottom: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: alpha(t.border, 0.7),
     },
-    headerTitle: { fontSize: 22, fontWeight: '800' },
-    iconBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    searchWrap: {
+    metricLabel: { fontSize: 16, fontWeight: '600' },
+    metricValueRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    metricValue: { fontSize: 42, fontWeight: '800', letterSpacing: -1.6, fontFamily: t.displayFont },
+    metricSubValue: { fontSize: 22, fontWeight: '700', fontFamily: t.displayFont },
+    trendBars: { marginTop: 4, marginBottom: 2 },
+    innerCard: { borderRadius: 20, padding: 16, gap: 8 },
+    innerTitle: { fontSize: 21, fontWeight: '800', fontFamily: t.displayFont },
+    innerCopy: { fontSize: 18, lineHeight: 28 },
+    quakeCard: { gap: 12, padding: 18 },
+    quakeTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    cardTitle: { fontSize: 18, fontWeight: '800' },
+    quakeMag: { fontSize: 19, fontWeight: '800', fontFamily: t.displayFont },
+    quakeTrend: { marginTop: 2 },
+    quakeMeta: { fontSize: 18, lineHeight: 24 },
+    detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    detailLabel: { fontSize: 15, fontWeight: '600' },
+    detailValue: { fontSize: 16, fontWeight: '800' },
+    detailCaption: { fontSize: 14, fontWeight: '600' },
+    actionRow: { flexDirection: 'row', gap: 10 },
+    actionButton: { flex: 1 },
+    feedCard: { gap: 14 },
+    feedHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' },
+    feedSub: { fontSize: 13, lineHeight: 18, marginTop: 4, maxWidth: 220 },
+    feedRow: {
       flexDirection: 'row',
-      alignItems: 'center',
-      borderRadius: 14,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      gap: 8,
-    },
-    searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
-    liveRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginTop: 10,
-      gap: 6,
-    },
-    liveText: { fontSize: 13, fontWeight: '600' },
-    liveSub: { fontSize: 12, opacity: 0.95, marginLeft: 4 },
-    liveDot: {
-      width: 7,
-      height: 7,
-      borderRadius: 4,
-      backgroundColor: '#4ade80',
-      marginLeft: 4,
-    },
-    summary: {
-      marginHorizontal: 16,
-      marginTop: 12,
-      borderRadius: 18,
-      padding: 14,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: t.border,
-    },
-    summaryHead: { marginBottom: 10 },
-    summaryTitle: { fontSize: 17, fontWeight: '800' },
-    summarySub: { fontSize: 13, marginTop: 2 },
-    buckets: { flexDirection: 'row', gap: 8 },
-    bucket: { flex: 1, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 6 },
-    bucketNum: { fontSize: 20, fontWeight: '800', textAlign: 'center' },
-    bucketLbl: { fontSize: 10, fontWeight: '700', textAlign: 'center', marginTop: 2 },
-    updateFoot: { fontSize: 12, marginTop: 10, textAlign: 'center' },
-    toolbar: { paddingHorizontal: 16, marginTop: 12, gap: 10 },
-    segment: {
-      flexDirection: 'row',
-      borderRadius: 14,
-      padding: 4,
-    },
-    segBtn: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      paddingVertical: 10,
-      borderRadius: 12,
-    },
-    segLabel: { fontSize: 14, fontWeight: '600' },
-    chips: { flexDirection: 'row', borderRadius: 14, padding: 4, gap: 6 },
-    chip: { flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
-    chipOn: {},
-    chipTxt: { fontSize: 12, fontWeight: '700' },
-    bannerErr: {
-      marginHorizontal: 16,
-      marginTop: 10,
-      padding: 12,
-      borderRadius: 12,
-      borderWidth: 1,
-    },
-    errText: { fontSize: 14 },
-    mapShell: { flex: 1, marginHorizontal: 16, marginTop: 10, marginBottom: 8 },
-    mapBadge: {
-      position: 'absolute',
-      bottom: 12,
-      alignSelf: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 20,
-    },
-    listPad: { paddingBottom: 100, paddingTop: 8 },
-    pad: { marginTop: 24 },
-    empty: { textAlign: 'center', marginTop: 32, fontSize: 15 },
-    qCard: {
-      marginHorizontal: 16,
-      marginBottom: 12,
-      borderRadius: 20,
-      borderWidth: 1,
-      padding: 14,
-      flexDirection: 'row',
-      alignItems: 'center',
       gap: 12,
+      alignItems: 'flex-start',
+      paddingBottom: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: alpha(t.border, 0.6),
     },
-    magCircle: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
-      borderWidth: 3,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'transparent',
+    feedDot: { width: 11, height: 11, borderRadius: 999, marginTop: 6 },
+    feedTitle: { fontSize: 15, fontWeight: '700' },
+    feedText: { fontSize: 13, lineHeight: 19, marginTop: 3 },
+    errorText: {
+      fontSize: 13,
+      lineHeight: 18,
+      paddingHorizontal: 4,
     },
-    magVal: { fontSize: 16, fontWeight: '800' },
-    magUnit: { fontSize: 10, fontWeight: '600', marginTop: -2 },
-    qBody: { flex: 1, minWidth: 0 },
-    qPlace: { fontSize: 14, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.3 },
-    qRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
-    qMeta: { fontSize: 12, flex: 1 },
   });
 }

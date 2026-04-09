@@ -3,9 +3,10 @@ import { AppState, Platform } from 'react-native';
 
 import type { AlertPreferences } from '@/context/AlertPreferencesContext';
 import { playAlertChime } from '@/lib/alertAudio';
-import { fetchRecentQuakes, haversineKm, sendLocationAlert } from '@/lib/api';
 import { getSafeDeviceLocation } from '@/lib/location';
 import { flushOfflineRelayQueue, queueOfflineRelayPacket } from '@/lib/offlineRelay';
+import { sendLocationAlert } from '@/services/alertService';
+import { fetchRecentQuakes, haversineKm } from '@/services/riskService';
 
 const EMERGENCY_SHARE_MAG_MIN = 5;
 const EMERGENCY_SHARE_DIST_MAX = 150;
@@ -17,13 +18,7 @@ export function useQuakeAlertMonitor(
   apiBase: string,
   token: string | null,
   emergencyContact: string | null | undefined,
-  preferences: AlertPreferences,
-  relayEmergencyText?: (text: string, preferredUsername?: string | null) => Promise<{
-    ok: boolean;
-    sentCount: number;
-    route: 'direct' | 'broadcast' | 'none';
-    message?: string;
-  }>
+  preferences: AlertPreferences
 ) {
   const running = useRef(false);
   const alertedEvents = useRef<Record<string, true>>({});
@@ -81,7 +76,9 @@ export function useQuakeAlertMonitor(
         }
 
         const position = await getCurrentPosition();
-        if (!position) return;
+        if (!position) {
+          return;
+        }
         const lat = position.lat;
         const lon = position.lon;
         const now = Date.now() / 1000;
@@ -130,9 +127,6 @@ export function useQuakeAlertMonitor(
           }
 
           const relayText = buildRelayText(lat, lon, eq, distanceKm);
-          if (relayEmergencyText) {
-            await relayEmergencyText(relayText, emergencyContact);
-          }
 
           if (sendResult.retryable) {
             await queueOfflineRelayPacket({
@@ -167,5 +161,5 @@ export function useQuakeAlertMonitor(
       if (timer) clearInterval(timer);
       appStateSub?.remove();
     };
-  }, [apiBase, emergencyContact, preferences, relayEmergencyText, token]);
+  }, [apiBase, emergencyContact, preferences, token]);
 }

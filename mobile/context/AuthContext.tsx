@@ -8,7 +8,8 @@ import React, {
 } from 'react';
 
 import { DEFAULT_API_URL } from '@/lib/config';
-import { fetchMe, loginRequest, registerRequest } from '@/lib/api';
+import { probeApiHealth } from '@/services/apiClient';
+import { fetchMe, loginRequest, logoutRequest } from '@/services/authService';
 import {
   clearStoredToken,
   getStoredApiBase,
@@ -32,13 +33,71 @@ type AuthContextValue = {
   ready: boolean;
   setApiBase: (url: string) => Promise<void>;
   login: (u: string, p: string) => Promise<{ ok: boolean; message?: string }>;
-  register: (u: string, p: string) => Promise<{ ok: boolean; message?: string }>;
   completeLoginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+function normalizeBaseUrl(url?: string | null): string | null {
+  const value = url?.trim().replace(/\/$/, '');
+  return value ? value : null;
+}
+
+function isPrivateHost(host: string): boolean {
+  if (host === 'localhost' || host === '127.0.0.1') return true;
+  if (/^10\.\d+\.\d+\.\d+$/.test(host)) return true;
+  if (/^192\.168\.\d+\.\d+$/.test(host)) return true;
+  const match = host.match(/^172\.(\d+)\.\d+\.\d+$/);
+  if (!match) return false;
+  const second = Number(match[1]);
+  return second >= 16 && second <= 31;
+}
+
+function shouldPreferDefaultApiBase(storedUrl?: string | null, defaultUrl?: string | null): boolean {
+  const stored = normalizeBaseUrl(storedUrl);
+  const fallback = normalizeBaseUrl(defaultUrl);
+  if (!stored || !fallback || stored === fallback) return false;
+
+  if (__DEV__) {
+    try {
+      const fallbackHost = new URL(fallback).hostname;
+      if (isPrivateHost(fallbackHost)) return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const storedHost = new URL(stored).hostname;
+    return isPrivateHost(storedHost);
+  } catch {
+    return false;
+  }
+}
+
+async function resolveStartupApiBase(storedUrl?: string | null, defaultUrl?: string | null) {
+  const stored = normalizeBaseUrl(storedUrl);
+  const fallback = normalizeBaseUrl(defaultUrl);
+
+  if (!stored) return fallback ?? DEFAULT_API_URL;
+  if (!fallback || stored === fallback) return stored;
+
+  const preferFallback = shouldPreferDefaultApiBase(stored, fallback);
+  const first = preferFallback ? fallback : stored;
+  const second = preferFallback ? stored : fallback;
+
+  if (await probeApiHealth(first, __DEV__ ? 2200 : 3200)) {
+    return first;
+  }
+
+  if (await probeApiHealth(second, __DEV__ ? 2600 : 3600)) {
+    return second;
+  }
+
+  return preferFallback ? fallback : stored;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -49,8 +108,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const stored = await getStoredApiBase();
-        if (stored?.trim()) setApiBaseState(stored.trim().replace(/\/$/, ''));
+        const stored = normalizeBaseUrl(await getStoredApiBase());
+        const fallback = normalizeBaseUrl(DEFAULT_API_URL);
+        const nextBase = await resolveStartupApiBase(stored, fallback);
+        if (nextBase) {
+          setApiBaseState(nextBase);
+          if (nextBase !== stored) await setStoredApiBase(nextBase);
+        }
         const t = await getStoredToken();
         setToken(t);
       } finally {
@@ -61,12 +125,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshMe = useCallback(async () => {
     const t = await getStoredToken();
-    const base = (await getStoredApiBase())?.trim() || DEFAULT_API_URL;
+    const base = apiBase;
     if (!t) {
       setUser(null);
       return;
     }
-    const { user: me, unauthorized } = await fetchMe(base.replace(/\/$/, ''), t);
+    const { user: me, unauthorized } = await fetchMe(base, t);
     if (unauthorized) {
       await clearStoredToken();
       setToken(null);
@@ -74,7 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (me) setUser(me);
-  }, []);
+  }, [apiBase]);
 
   useEffect(() => {
     if (!ready || !token) {
@@ -85,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [ready, token, refreshMe]);
 
   const setApiBase = useCallback(async (url: string) => {
-    const u = url.trim().replace(/\/$/, '');
+    const u = normalizeBaseUrl(url) || DEFAULT_API_URL;
     setApiBaseState(u);
     await setStoredApiBase(u);
     await refreshMe();
@@ -103,23 +167,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [apiBase]
   );
 
-  const register = useCallback(
-    async (username: string, password: string) => {
-      const res = await registerRequest(apiBase, username, password);
-      if (!res.ok || !res.token)
-        return { ok: false, message: res.message };
-      await setStoredToken(res.token);
-      setToken(res.token);
-      return { ok: true };
-    },
-    [apiBase]
-  );
-
   const logout = useCallback(async () => {
+    const currentToken = await getStoredToken();
+    if (currentToken) {
+      try {
+        await logoutRequest(apiBase, currentToken);
+      } catch {
+        /* local logout should still complete offline */
+      }
+    }
     await clearStoredToken();
     setToken(null);
     setUser(null);
-  }, []);
+  }, [apiBase]);
 
   const completeLoginWithToken = useCallback(async (value: string) => {
     await setStoredToken(value);
@@ -134,7 +194,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ready,
       setApiBase,
       login,
-      register,
       completeLoginWithToken,
       logout,
       refreshMe,
@@ -146,7 +205,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ready,
       setApiBase,
       login,
-      register,
       completeLoginWithToken,
       logout,
       refreshMe,

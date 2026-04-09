@@ -1,35 +1,50 @@
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
+import { useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import EditScreenInfo from '@/components/EditScreenInfo';
-import { Text, View } from '@/components/Themed';
+import { CosmicBackdrop, CosmicLabel, GlassCard, GlowButton } from '@/components/cosmic';
+import { useColorScheme } from '@/components/useColorScheme';
+import { theme, type ThemeTokens } from '@/constants/theme';
 
 export default function ModalScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Modal</Text>
-      <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
-      <EditScreenInfo path="app/modal.tsx" />
+  const colorScheme = useColorScheme();
+  const scheme = colorScheme === 'dark' ? 'dark' : 'light';
+  const t = theme[scheme];
+  const styles = useMemo(() => makeStyles(t), [t]);
 
-      {/* Use a light status bar on iOS to account for the black space above the modal */}
-      <StatusBar style={Platform.OS === 'ios' ? 'light' : 'auto'} />
+  return (
+    <View style={styles.root}>
+      <CosmicBackdrop t={t} compact />
+      <View style={styles.container}>
+        <GlassCard t={t} tone="cool" style={styles.card}>
+          <CosmicLabel t={t}>info panel</CosmicLabel>
+          <FontAwesome name="info-circle" size={28} color={t.brandTab} />
+          <Text style={[styles.title, { color: t.text }]}>Bilgi Penceresi</Text>
+          <Text style={[styles.body, { color: t.textSecondary }]}>
+            Bu alanı ileride detay paneli, onboarding ipucu ya da kritik bilgilendirme akışı için
+            kullanabiliriz.
+          </Text>
+          <GlowButton t={t} label="Kapat" onPress={() => router.back()} />
+          <Pressable onPress={() => router.replace('/(tabs)')} style={styles.link}>
+            <Text style={[styles.linkText, { color: t.brandTab }]}>Ana akışa dön</Text>
+          </Pressable>
+        </GlassCard>
+      </View>
+      <StatusBar style="light" />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  separator: {
-    marginVertical: 30,
-    height: 1,
-    width: '80%',
-  },
-});
+function makeStyles(t: ThemeTokens) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: t.bg },
+    container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22 },
+    card: { width: '100%', maxWidth: 420, alignItems: 'center', gap: 12, padding: 22 },
+    title: { fontSize: 24, fontWeight: '800', fontFamily: t.displayFont },
+    body: { fontSize: 14, lineHeight: 22, textAlign: 'center' },
+    link: { paddingTop: 2 },
+    linkText: { fontSize: 14, fontWeight: '700' },
+  });
+}

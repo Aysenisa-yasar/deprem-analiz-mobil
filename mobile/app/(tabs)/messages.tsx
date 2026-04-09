@@ -16,19 +16,26 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AvatarOrb, CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, alpha } from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
-import { useMesh } from '@/context/MeshContext';
 import { theme, type ThemeTokens } from '@/constants/theme';
-import { fetchMessages, sendMessage, type ChatMessage } from '@/lib/api';
 import {
   flushOfflineRelayQueue,
   getOfflineRelayQueue,
   queueOfflineRelayPacket,
 } from '@/lib/offlineRelay';
+import { fetchMessages, sendMessage } from '@/services/messageService';
+import type { ChatMessage } from '@/services/types';
 
 const POLL_MS = 50_000;
 const TAB_BAR_CLEARANCE = 58;
+
+const QUICK_ACTIONS = [
+  'Güvendeyim',
+  'Yardım lazım',
+  'Konumumu paylaş',
+];
 
 function formatMessageTime(createdAt: number): string {
   return new Date(createdAt * 1000).toLocaleTimeString('tr-TR', {
@@ -51,10 +58,10 @@ export default function MessagesScreen() {
   const listPadBottom = keyboardVisible ? 24 + 12 + safeBottomInset : 24 + composePadBottom;
 
   const { token, user, apiBase, ready } = useAuth();
-  const { running: meshRunning, connectedPeers } = useMesh();
   const [list, setList] = useState<ChatMessage[]>([]);
   const [toUser, setToUser] = useState('');
   const [body, setBody] = useState('');
+  const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
   const [queueBusy, setQueueBusy] = useState(false);
@@ -138,6 +145,14 @@ export default function MessagesScreen() {
     return () => clearInterval(intervalId);
   }, [apiBase, mergeMessages, ready, token]);
 
+  const filteredList = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('tr-TR');
+    if (!query) return list;
+    return list.filter((item) =>
+      `${item.from_user} ${item.to_user} ${item.body}`.toLocaleLowerCase('tr-TR').includes(query)
+    );
+  }, [list, search]);
+
   const onSend = async () => {
     if (!token || !user) return;
     setSendErr(null);
@@ -145,7 +160,7 @@ export default function MessagesScreen() {
     const recipient = toUser.trim();
     const content = body.trim();
     if (!recipient || !content) {
-      setSendErr('Kullanici adi ve mesaj gerekli.');
+      setSendErr('Kullanıcı adı ve mesaj gerekli.');
       return;
     }
 
@@ -159,10 +174,10 @@ export default function MessagesScreen() {
         });
         const queue = await getOfflineRelayQueue();
         setQueuedCount(queue.length);
-        setSendErr('Ag baglantisi yok gibi gorunuyor. Mesaj cihazda kuyruga alindi.');
+        setSendErr('Ağ yok gibi görünüyor. Mesaj cihazda kuyruklandı.');
         return;
       }
-      setSendErr(result.message || 'Mesaj gonderilemedi.');
+      setSendErr(result.message || 'Mesaj gönderilemedi.');
       return;
     }
 
@@ -183,10 +198,10 @@ export default function MessagesScreen() {
         setList(fresh);
       }
       if (result.remaining > 0) {
-        setSendErr(`Kuyrukta ${result.remaining} mesaj kaldi. Hala ag veya alici sorunu olabilir.`);
+        setSendErr(`Kuyrukta ${result.remaining} mesaj kaldı. Hâlâ ağ veya alıcı sorunu olabilir.`);
         return;
       }
-      setSendErr(result.sent > 0 ? 'Kuyruktaki mesajlar gonderildi.' : 'Kuyruk zaten bos.');
+      setSendErr(result.sent > 0 ? 'Kuyruktaki mesajlar gönderildi.' : 'Kuyruk zaten boş.');
     } finally {
       setQueueBusy(false);
     }
@@ -203,6 +218,14 @@ export default function MessagesScreen() {
     }
   };
 
+  const applyQuickAction = (label: string) => {
+    if (label === 'Konumumu paylaş') {
+      setBody('Konumumu paylaşmam gerekiyor. Müsaitsen bana dönüş yap.');
+      return;
+    }
+    setBody(label);
+  };
+
   if (!ready) {
     return (
       <View style={[styles.center, { backgroundColor: t.bg }]}>
@@ -213,250 +236,294 @@ export default function MessagesScreen() {
 
   if (!token) {
     return (
-      <View style={[styles.center, { backgroundColor: t.bg }]}>
-        <View style={[styles.lockCircle, { backgroundColor: t.surfaceMuted }]}>
-          <FontAwesome name="comments" size={32} color={t.accent} />
+      <View style={styles.root}>
+        <CosmicBackdrop t={t} />
+        <View style={[styles.center, styles.lockPad]}>
+          <GlassCard t={t} tone="cool" style={styles.lockCard}>
+            <AvatarOrb t={t} label="MS" size={62} />
+            <Text style={[styles.lockTitle, { color: t.text }]}>Acil Mesajlar</Text>
+            <Text style={[styles.lockText, { color: t.textSecondary }]}>
+              Hesabınla giriş yaptığında birebir mesajlaşabilir, durum kartlarını kaydedebilir ve
+              kuyruklanan iletileri yönetebilirsin.
+            </Text>
+          </GlassCard>
         </View>
-        <Text style={[styles.hintTitle, { color: t.text }]}>Mesajlar</Text>
-        <Text style={[styles.hint, { color: t.textSecondary }]}>
-          Hesapla giris yaptiginda kullanici adiyla birebir mesajlasabilir ve acil durum
-          bildirimlerini gorebilirsin.
-        </Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.flex, { backgroundColor: t.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 74 : 0}>
-      <View style={styles.topPad}>
-        <Text style={[styles.head, { color: t.text }]}>Sohbet</Text>
-        <Text style={[styles.headSub, { color: t.textMuted }]}>
-          Arka plan yenileme aktif degil. Ekran acikken yaklasik {Math.round(POLL_MS / 1000)} sn
-          arayla kontrol edilir.
-        </Text>
-        <Pressable
-          onPress={() => router.push('/mesh' as never)}
-          style={[styles.meshLink, { backgroundColor: t.surfaceMuted }]}>
-          <FontAwesome name="wifi" size={14} color={t.brandTab} />
-          <Text style={[styles.meshLinkText, { color: t.text }]}>Yakin ag ekranini ac</Text>
-        </Pressable>
-        <View style={[styles.offlineBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
-          <View style={styles.offlineBannerTextWrap}>
-            <Text style={[styles.offlineTitle, { color: t.text }]}>Offline kuyruk modu</Text>
-            <Text style={[styles.offlineBody, { color: t.textSecondary }]}>
-              Internet yoksa mesajlar cihazda saklanir. Gercek operatorsuz/ internetsiz cihazlar
-              arasi aktarim icin native mesh altyapisi gerekiyor.
-            </Text>
-            <Text style={[styles.offlineMeta, { color: t.textMuted }]}>
-              Kuyruktaki mesaj: {queuedCount}
-            </Text>
-            <Text style={[styles.offlineMeta, { color: t.textMuted }]}>
-              Mesh: {meshRunning ? `aktif, ${connectedPeers.length} cihaz bagli` : 'kapali'}
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => void onFlushQueue()}
-            disabled={queueBusy || queuedCount === 0}
-            style={({ pressed }) => [
-              styles.flushBtn,
-              {
-                backgroundColor:
-                  queueBusy || queuedCount === 0
-                    ? t.surfaceMuted
-                    : pressed
-                      ? t.accentRipple
-                      : t.accent,
-              },
-            ]}>
-            <Text style={[styles.flushBtnText, { color: queueBusy || queuedCount === 0 ? t.textMuted : '#fff' }]}>
-              {queueBusy ? 'Deneniyor' : 'Tekrar gonder'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <FlatList
-        data={list}
-        keyExtractor={(item) => String(item.id)}
-        removeClippedSubviews={Platform.OS === 'android'}
-        style={styles.list}
-        contentContainerStyle={[styles.listContent, { paddingBottom: listPadBottom }]}
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-        renderItem={({ item }) => {
-          const mine = item.from_user.toLowerCase() === user?.username.toLowerCase();
-          const alert = item.kind === 'location_alert';
-          return (
-            <View
-              style={[
-                styles.bubble,
-                mine ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' },
-                mine
-                  ? { backgroundColor: t.accent, borderTopRightRadius: 4 }
-                  : {
-                      backgroundColor: t.surface,
-                      borderColor: t.border,
-                      borderWidth: 1,
-                      borderTopLeftRadius: 4,
-                    },
-                alert && !mine ? { borderColor: t.warn } : null,
-              ]}>
-              <Text
-                style={[
-                  styles.meta,
-                  { color: mine ? 'rgba(255,255,255,0.88)' : t.textMuted },
-                ]}>
-                {mine ? 'Sen' : item.from_user}
-                {' -> '}
-                {item.to_user}
-                {alert ? ' · konum uyarisi' : ''} · {formatMessageTime(item.created_at)}
-              </Text>
-              <Text style={[styles.bodyText, { color: mine ? '#fff' : t.text }]}>
-                {item.body}
-              </Text>
+    <View style={styles.root}>
+      <CosmicBackdrop t={t} />
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 74 : 0}>
+        <View style={styles.topPad}>
+          <View style={styles.headerRow}>
+            <Pressable onPress={() => router.push('/(tabs)/emergency')} style={styles.headerBack}>
+              <FontAwesome name="arrow-left" size={16} color={t.brandTab} />
+            </Pressable>
+            <Text style={[styles.head, { color: t.text }]}>Acil Mesajlar</Text>
+            <View style={styles.headerIcons}>
+              <FontAwesome name="search" size={18} color={t.textMuted} />
+              <FontAwesome name="user-circle-o" size={18} color={t.textMuted} />
             </View>
-          );
-        }}
-      />
+          </View>
 
-      {sendErr ? <Text style={[styles.err, { color: t.danger }]}>{sendErr}</Text> : null}
+          <View style={[styles.searchWrap, { backgroundColor: t.inputBg, borderColor: t.border }]}>
+            <FontAwesome name="search" size={16} color={t.textMuted} />
+            <TextInput
+              placeholder="Mesajlarda Ara..."
+              placeholderTextColor={t.textMuted}
+              value={search}
+              onChangeText={setSearch}
+              style={[styles.searchInput, { color: t.text }]}
+            />
+          </View>
 
-      <View
-        style={[
-          styles.compose,
-          { backgroundColor: t.surface, borderTopColor: t.border, paddingBottom: composePadBottom },
-        ]}>
-        {user?.emergency_contact ? (
-          <Pressable
-            onPress={() => setToUser(user.emergency_contact ?? '')}
-            style={[styles.contactChip, { backgroundColor: t.surfaceMuted }]}>
-            <FontAwesome name="bolt" size={12} color={t.brandTab} />
-            <Text style={[styles.contactChipText, { color: t.text }]}>
-              Acil kisi: @{user.emergency_contact}
+          <GlassCard t={t} tone="cool" style={styles.statusCard}>
+            <View style={styles.statusHead}>
+              <View>
+                <Text style={[styles.statusTitle, { color: t.text }]}>Offline Akış</Text>
+                <Text style={[styles.statusBody, { color: t.textSecondary }]}>
+                  İnternet kesilirse mesajlar cihazda saklanır, ağ gelince yeniden gönderilir.
+                </Text>
+              </View>
+              <CosmicLabel t={t}>{queuedCount} kuyruk</CosmicLabel>
+            </View>
+            <View style={styles.statusMetaRow}>
+              <Text style={[styles.statusMeta, { color: t.textMuted }]}>
+                Teslimat: internet varsa anlık, yoksa kalıcı kuyruk
+              </Text>
+              <GlowButton
+                t={t}
+                label={queueBusy ? 'Deneniyor' : 'Tekrar Gönder'}
+                onPress={() => void onFlushQueue()}
+                disabled={queueBusy || queuedCount === 0}
+                style={styles.flushButton}
+              />
+            </View>
+          </GlassCard>
+        </View>
+
+        <FlatList
+          data={filteredList}
+          keyExtractor={(item) => String(item.id)}
+          removeClippedSubviews={Platform.OS === 'android'}
+          style={styles.list}
+          contentContainerStyle={[styles.listContent, { paddingBottom: listPadBottom }]}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          ListEmptyComponent={
+            <Text style={[styles.emptyText, { color: t.textSecondary }]}>
+              Konuşma akışı burada görünecek.
             </Text>
-          </Pressable>
-        ) : null}
+          }
+          renderItem={({ item }) => {
+            const mine = item.from_user.toLowerCase() === user?.username.toLowerCase();
+            const alert = item.kind === 'location_alert';
+            const senderLabel = (mine ? item.to_user : item.from_user).slice(0, 2).toUpperCase();
 
-        <TextInput
-          placeholder="Alici kullanici adi"
-          placeholderTextColor={t.textMuted}
-          autoCapitalize="none"
-          style={[
-            styles.input,
-            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
-          ]}
-          value={toUser}
-          onChangeText={setToUser}
+            return (
+              <View style={[styles.messageRow, mine && styles.messageRowMine]}>
+                {!mine ? <AvatarOrb t={t} label={senderLabel} size={40} /> : null}
+                <View
+                  style={[
+                    styles.messageCard,
+                    mine
+                      ? { backgroundColor: alpha(t.glowBlue, 0.18), borderColor: alpha(t.glowBlue, 0.28) }
+                      : {
+                          backgroundColor: alert ? alpha(t.glowOrange, 0.10) : t.panel,
+                          borderColor: alert ? alpha(t.glowOrange, 0.24) : t.border,
+                        },
+                  ]}>
+                  <View style={styles.messageMetaRow}>
+                    <Text style={[styles.messageName, { color: mine ? '#eef7ff' : t.text }]}>
+                      {mine ? 'Sen' : item.from_user}
+                    </Text>
+                    <Text style={[styles.messageTime, { color: mine ? 'rgba(255,255,255,0.72)' : t.textMuted }]}>
+                      {formatMessageTime(item.created_at)}
+                    </Text>
+                  </View>
+                  <Text style={[styles.messageBody, { color: mine ? '#eef7ff' : t.textSecondary }]}>
+                    {item.body}
+                  </Text>
+                </View>
+              </View>
+            );
+          }}
         />
-        <TextInput
-          placeholder="Mesajiniz..."
-          placeholderTextColor={t.textMuted}
+
+        <View
           style={[
-            styles.input,
-            styles.inputMulti,
-            { color: t.text, borderColor: t.border, backgroundColor: t.surfaceMuted },
-          ]}
-          value={body}
-          onChangeText={setBody}
-          multiline
-        />
-        <Pressable
-          style={({ pressed }) => [
-            styles.btn,
-            { backgroundColor: pressed ? t.accentRipple : t.accent, opacity: pressed ? 0.95 : 1 },
-          ]}
-          onPress={() => void onSend()}>
-          <Text style={[styles.btnText, { color: scheme === 'dark' ? t.onAccent : '#fff' }]}>
-            Gonder
-          </Text>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+            styles.compose,
+            {
+              backgroundColor: alpha(t.overlayStrong, 0.98),
+              borderTopColor: t.border,
+              paddingBottom: composePadBottom,
+            },
+          ]}>
+          {sendErr ? <Text style={[styles.errorText, { color: t.danger }]}>{sendErr}</Text> : null}
+
+          <View style={styles.quickRow}>
+            {QUICK_ACTIONS.map((item) => (
+              <Pressable
+                key={item}
+                onPress={() => applyQuickAction(item)}
+                style={[styles.quickChip, { backgroundColor: alpha(t.glowBlue, 0.10), borderColor: alpha(t.glowBlue, 0.20) }]}>
+                <Text style={[styles.quickChipText, { color: t.text }]}>{item}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {user?.emergency_contact ? (
+            <Pressable
+              onPress={() => setToUser(user.emergency_contact ?? '')}
+              style={[styles.contactChip, { backgroundColor: alpha(t.glowOrange, 0.10), borderColor: alpha(t.glowOrange, 0.22) }]}>
+              <FontAwesome name="shield" size={12} color={t.warn} />
+              <Text style={[styles.contactChipText, { color: t.text }]}>
+                Acil Yardım Grubu: @{user.emergency_contact}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          <TextInput
+            placeholder="Alıcı kullanıcı adı"
+            placeholderTextColor={t.textMuted}
+            autoCapitalize="none"
+            style={[styles.input, { color: t.text, borderColor: t.border, backgroundColor: t.inputBg }]}
+            value={toUser}
+            onChangeText={setToUser}
+          />
+          <View style={styles.composeRow}>
+            <TextInput
+              placeholder="Mesajınızı yazın..."
+              placeholderTextColor={t.textMuted}
+              style={[
+                styles.input,
+                styles.inputMulti,
+                { color: t.text, borderColor: t.border, backgroundColor: t.inputBg },
+              ]}
+              value={body}
+              onChangeText={setBody}
+              multiline
+            />
+            <Pressable
+              onPress={() => void onSend()}
+              style={({ pressed }) => [
+                styles.sendFab,
+                { backgroundColor: pressed ? t.accentRipple : t.accent },
+              ]}>
+              <FontAwesome name="send" size={16} color={scheme === 'dark' ? t.onAccent : '#fff'} />
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 function makeStyles(t: ThemeTokens) {
   return StyleSheet.create({
-    flex: { flex: 1 },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 },
-    lockCircle: {
-      width: 72,
-      height: 72,
-      borderRadius: 36,
+    root: { flex: 1, backgroundColor: t.bg },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    lockPad: { padding: 22 },
+    lockCard: { alignItems: 'center', gap: 12, padding: 22 },
+    lockTitle: { fontSize: 26, fontWeight: '800', fontFamily: t.displayFont },
+    lockText: { fontSize: 14, lineHeight: 22, textAlign: 'center' },
+    topPad: { paddingHorizontal: 18, paddingTop: 8, gap: 12 },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    headerBack: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: 16,
+      backgroundColor: alpha(t.glowBlue, 0.10),
+      borderWidth: 1,
+      borderColor: alpha(t.glowBlue, 0.18),
     },
-    hintTitle: { fontSize: 20, fontWeight: '700' },
-    hint: { marginTop: 8, textAlign: 'center', lineHeight: 22, maxWidth: 280 },
-    topPad: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
-    head: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
-    headSub: { fontSize: 12, marginTop: 4, lineHeight: 18 },
-    meshLink: {
-      marginTop: 10,
-      alignSelf: 'flex-start',
+    head: { fontSize: 30, fontWeight: '800', letterSpacing: -0.9, fontFamily: t.displayFont },
+    headerIcons: { flexDirection: 'row', gap: 12 },
+    searchWrap: {
+      minHeight: 52,
+      borderRadius: 18,
+      borderWidth: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 9,
-      borderRadius: 999,
-    },
-    meshLinkText: { fontSize: 12, fontWeight: '800' },
-    offlineBanner: {
-      marginTop: 12,
-      borderWidth: 1,
-      borderRadius: 18,
-      padding: 14,
+      paddingHorizontal: 14,
       gap: 10,
     },
-    offlineBannerTextWrap: { gap: 4 },
-    offlineTitle: { fontSize: 14, fontWeight: '800' },
-    offlineBody: { fontSize: 12, lineHeight: 18 },
-    offlineMeta: { fontSize: 12, fontWeight: '700' },
-    flushBtn: {
-      alignItems: 'center',
-      borderRadius: 12,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-    },
-    flushBtnText: { fontSize: 13, fontWeight: '800' },
+    searchInput: { flex: 1, fontSize: 15 },
+    statusCard: { gap: 12 },
+    statusHead: { gap: 6 },
+    statusTitle: { fontSize: 18, fontWeight: '800' },
+    statusBody: { fontSize: 13, lineHeight: 19 },
+    statusMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+    statusMeta: { fontSize: 12, fontWeight: '700', flex: 1 },
+    flushButton: { minWidth: 132 },
     list: { flex: 1 },
-    listContent: {},
-    err: { paddingHorizontal: 16, marginBottom: 4, fontSize: 13 },
-    bubble: {
-      marginHorizontal: 14,
-      marginBottom: 10,
-      padding: 14,
-      borderRadius: 18,
-      maxWidth: '88%',
+    listContent: { paddingTop: 18, paddingHorizontal: 18 },
+    emptyText: { textAlign: 'center', marginTop: 36, fontSize: 15 },
+    messageRow: { flexDirection: 'row', gap: 10, marginBottom: 12, alignItems: 'flex-end' },
+    messageRowMine: { justifyContent: 'flex-end' },
+    messageCard: {
+      maxWidth: '82%',
+      borderWidth: 1,
+      borderRadius: 22,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 8,
     },
-    meta: { fontSize: 11, marginBottom: 6, fontWeight: '500' },
-    bodyText: { fontSize: 15, lineHeight: 21 },
-    compose: { padding: 14, paddingTop: 14, borderTopWidth: 1, gap: 8 },
+    messageMetaRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, alignItems: 'center' },
+    messageName: { fontSize: 14, fontWeight: '800' },
+    messageTime: { fontSize: 12, fontWeight: '600' },
+    messageBody: { fontSize: 15, lineHeight: 22 },
+    compose: { borderTopWidth: 1, paddingHorizontal: 14, paddingTop: 12, gap: 10 },
+    errorText: { fontSize: 13, lineHeight: 18 },
+    quickRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+    quickChip: {
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    quickChipText: { fontSize: 12, fontWeight: '700' },
     contactChip: {
       flexDirection: 'row',
       alignItems: 'center',
       alignSelf: 'flex-start',
+      gap: 8,
+      borderWidth: 1,
+      borderRadius: 999,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 999,
-      gap: 6,
     },
     contactChipText: { fontSize: 12, fontWeight: '700' },
     input: {
+      minHeight: 50,
       borderWidth: 1,
-      borderRadius: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderRadius: 16,
+      paddingHorizontal: 16,
       fontSize: 15,
     },
-    inputMulti: { minHeight: 72, textAlignVertical: 'top' },
-    btn: { paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
-    btnText: { fontWeight: '700', fontSize: 16 },
+    composeRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-end' },
+    inputMulti: {
+      flex: 1,
+      minHeight: 64,
+      textAlignVertical: 'top',
+      paddingTop: 14,
+      paddingBottom: 14,
+    },
+    sendFab: {
+      width: 52,
+      height: 52,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 2,
+    },
   });
 }

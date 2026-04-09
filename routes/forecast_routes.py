@@ -1,11 +1,12 @@
 import time
 from threading import Lock
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, request
 
+from app.responses import error_response, success_response
 from constants.turkey_cities import TURKEY_CITIES
 from forecast.predictor import load_model
-from services.anomaly_service import anomaly_score
+from services.anomaly_service import anomaly_score_from_features
 from services.data_service import load_events
 from services.forecast_service import (
     forecast_city,
@@ -14,6 +15,8 @@ from services.forecast_service import (
     get_warning_capability,
 )
 from services.grid_forecast_service import forecast_grid
+from services.model_artifact_service import load_forecast_metadata
+from services.mobile_social_db import record_earthquake_events, record_risk_predictions
 
 forecast_bp = Blueprint("forecast", __name__)
 
@@ -56,8 +59,11 @@ def _build_point_payload(name: str, lat: float, lon: float, pred: dict, anomaly_
         "city": name,
         "lat": lat,
         "lon": lon,
+        "region": pred.get("region"),
         "risk_score": pred["risk_score"],
+        "confidence": pred.get("confidence", 0.0),
         "probability": pred["probability"],
+        "time_windows": pred.get("time_windows", {}),
         "ml_probability": pred["ml_probability"],
         "etas_probability": pred["etas_probability"],
         "lstm_probability": pred.get("lstm_probability", 0.0),
@@ -92,6 +98,55 @@ def _build_point_payload(name: str, lat: float, lon: float, pred: dict, anomaly_
         "model_health": pred.get("model_health", {}),
         "warning_capability": pred.get("warning_capability", {}),
         "alert_advisory": pred.get("alert_advisory", {}),
+        "explanation_summary": pred.get("explanation_summary"),
+    }
+
+
+def _build_city_points(events: list, model_data: dict | None) -> list[dict]:
+    points = []
+    for name, city in TURKEY_CITIES.items():
+        try:
+            pred = forecast_city(events, city, explain=False, model_data=model_data, fast_mode=True)
+        except Exception:
+            pred = forecast_city(events, city, explain=False, model_data={}, fast_mode=True)
+        anomaly_value = anomaly_score_from_features(pred.get("features"))
+        points.append(_build_point_payload(name, city["lat"], city["lon"], pred, anomaly_value))
+    return points
+
+
+def _fallback_map_payload(events: list, metadata: dict | None = None) -> dict:
+    metadata = metadata or {}
+    model_data: dict = {}
+    points = _build_city_points(events, model_data)
+    return {
+        "status": "success",
+        "version": metadata.get("version"),
+        "model_type": "forecast_runtime_fallback",
+        "trained_at": metadata.get("trained_at"),
+        "analysis_window": "past_48h",
+        "degraded": True,
+        "model_health": get_forecast_model_health(model_data),
+        "warning_capability": get_warning_capability(model_data),
+        "points": points,
+    }
+
+
+def _fallback_location_payload(events: list, lat: float, lon: float, metadata: dict | None = None) -> dict:
+    metadata = metadata or {}
+    model_data: dict = {}
+    pred = forecast_point(events, lat, lon, explain=False, model_data=model_data, fast_mode=True)
+    anomaly_value = anomaly_score_from_features(pred.get("features"))
+    point = _build_point_payload("Bulundugun konum", lat, lon, pred, anomaly_value)
+    return {
+        "status": "success",
+        "version": metadata.get("version"),
+        "model_type": "forecast_runtime_fallback",
+        "trained_at": metadata.get("trained_at"),
+        "analysis_window": "past_48h",
+        "degraded": True,
+        "model_health": get_forecast_model_health(model_data),
+        "warning_capability": get_warning_capability(model_data),
+        "point": point,
     }
 
 
@@ -100,78 +155,110 @@ def forecast_map_v2():
     try:
         cached = _cache_get("forecast-map", _MAP_TTL_SEC)
         if cached is not None:
-            return jsonify(cached)
+            return success_response(cached, message="Forecast map cache")
+
         events = load_events()
+        record_earthquake_events(events, source="forecast_map")
         model_data = load_model()
+        metadata = load_forecast_metadata()
         model_health = get_forecast_model_health(model_data)
-        points = []
-        for name, city in TURKEY_CITIES.items():
-            pred = forecast_city(events, city, explain=False, model_data=model_data)
-            anomaly_value = anomaly_score(events, city["lat"], city["lon"])
-            points.append(_build_point_payload(name, city["lat"], city["lon"], pred, anomaly_value))
+        points = _build_city_points(events, model_data)
+
         payload = {
             "status": "success",
-            "model_type": MODEL_TYPE,
+            "version": metadata.get("version"),
+            "model_type": (model_data or {}).get("model_type", MODEL_TYPE) if model_health.get("available") else "forecast_runtime_fallback",
+            "trained_at": metadata.get("trained_at") or (model_data or {}).get("trained_at"),
             "analysis_window": "past_48h",
+            "degraded": not bool(model_health.get("available")),
             "model_health": model_health,
             "warning_capability": get_warning_capability(model_data),
             "points": points,
         }
+        record_risk_predictions("forecast_map", points, model_version=MODEL_TYPE)
         _cache_set("forecast-map", payload)
-        return jsonify(payload)
+        return success_response(payload)
     except Exception as exc:
-        return jsonify(
-            {
-                "status": "error",
-                "message": str(exc),
+        try:
+            metadata = load_forecast_metadata()
+            payload = _fallback_map_payload(load_events(), metadata)
+            _cache_set("forecast-map", payload)
+            return success_response(
+                payload,
+                message="Forecast fallback mode",
+            )
+        except Exception:
+            pass
+        return error_response(
+            str(exc),
+            code="FORECAST_MAP_FAILED",
+            http_status=500,
+            payload={
                 "points": [],
                 "model_health": {},
                 "warning_capability": {},
-            }
-        ), 500
+            },
+        )
 
 
 @forecast_bp.route("/api/v2/forecast-grid", methods=["GET"])
 def forecast_grid_v2():
     try:
+        horizon_hours = int(request.args.get("hours", 24) or 24)
+        horizon_hours = 6 if horizon_hours <= 6 else 72 if horizon_hours >= 72 else 24
         cached = _cache_get("forecast-grid", _GRID_TTL_SEC)
-        if cached is not None:
-            return jsonify(cached)
+        if cached is not None and cached.get("horizon_hours") == horizon_hours:
+            return success_response(cached, message="Forecast grid cache")
+
         events = load_events()
-        points = forecast_grid(events, step=0.75)
+        record_earthquake_events(events, source="forecast_grid")
+        metadata = load_forecast_metadata()
+        points = forecast_grid(events, step=0.75, horizon_hours=horizon_hours)
         payload = {
             "status": "success",
+            "version": metadata.get("version"),
             "model_type": MODEL_TYPE,
+            "trained_at": metadata.get("trained_at"),
             "grid_step": 0.75,
+            "horizon_hours": horizon_hours,
             "points": points,
         }
+        record_risk_predictions("forecast_grid", points, model_version=MODEL_TYPE)
         _cache_set("forecast-grid", payload)
-        return jsonify(payload)
+        return success_response(payload)
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc), "points": []}), 500
+        return error_response(
+            str(exc),
+            code="FORECAST_GRID_FAILED",
+            http_status=500,
+            payload={"points": []},
+        )
 
 
 @forecast_bp.route("/api/v2/forecast-model-status", methods=["GET"])
 def forecast_model_status_v2():
     try:
         model_data = load_model()
-        return jsonify(
+        metadata = load_forecast_metadata()
+        return success_response(
             {
-                "status": "success",
+                "version": metadata.get("version"),
                 "model_type": MODEL_TYPE,
+                "trained_at": metadata.get("trained_at") or (model_data or {}).get("trained_at"),
                 "model_health": get_forecast_model_health(model_data),
                 "warning_capability": get_warning_capability(model_data),
             }
         )
     except Exception as exc:
-        return jsonify(
-            {
-                "status": "error",
-                "message": str(exc),
+        return error_response(
+            str(exc),
+            code="FORECAST_MODEL_STATUS_FAILED",
+            http_status=500,
+            payload={
                 "model_health": {},
                 "warning_capability": {},
-            }
-        ), 500
+            },
+        )
 
 
 @forecast_bp.route("/api/v2/forecast-location", methods=["GET"])
@@ -180,52 +267,75 @@ def forecast_location_v2():
         lat = float(request.args.get("lat"))
         lon = float(request.args.get("lon"))
     except (TypeError, ValueError):
-        return jsonify({"status": "error", "message": "Gecerli lat/lon gerekli"}), 400
+        return error_response(
+            "Gecerli lat/lon gerekli",
+            code="INVALID_COORDINATES",
+            http_status=400,
+        )
 
     try:
         cache_key = f"forecast-location:{lat:.3f}:{lon:.3f}"
         cached = _cache_get(cache_key, _LOCATION_TTL_SEC)
         if cached is not None:
-            return jsonify(cached)
+            return success_response(cached, message="Forecast location cache")
+
         events = load_events()
+        record_earthquake_events(events, source="forecast_location")
         model_data = load_model()
+        metadata = load_forecast_metadata()
         model_health = get_forecast_model_health(model_data)
         pred = forecast_point(events, lat, lon, explain=False, model_data=model_data)
-        anomaly_value = anomaly_score(events, lat, lon)
+        anomaly_value = anomaly_score_from_features(pred.get("features"))
         point = _build_point_payload("Bulundugun konum", lat, lon, pred, anomaly_value)
         payload = {
             "status": "success",
-            "model_type": MODEL_TYPE,
+            "version": metadata.get("version"),
+            "model_type": (model_data or {}).get("model_type", MODEL_TYPE) if model_health.get("available") else "forecast_runtime_fallback",
+            "trained_at": metadata.get("trained_at") or (model_data or {}).get("trained_at"),
             "analysis_window": "past_48h",
+            "degraded": not bool(model_health.get("available")),
             "model_health": model_health,
             "warning_capability": get_warning_capability(model_data),
             "point": point,
         }
+        record_risk_predictions("forecast_location", [point], model_version=MODEL_TYPE)
         _cache_set(cache_key, payload)
-        return jsonify(payload)
+        return success_response(payload)
     except Exception as exc:
-        return jsonify(
-            {
-                "status": "error",
-                "message": str(exc),
+        try:
+            metadata = load_forecast_metadata()
+            payload = _fallback_location_payload(load_events(), lat, lon, metadata)
+            _cache_set(cache_key, payload)
+            return success_response(
+                payload,
+                message="Forecast location fallback mode",
+            )
+        except Exception:
+            pass
+        return error_response(
+            str(exc),
+            code="FORECAST_LOCATION_FAILED",
+            http_status=500,
+            payload={
                 "point": {},
                 "model_health": {},
                 "warning_capability": {},
-            }
-        ), 500
+            },
+        )
 
 
 @forecast_bp.route("/api/v2/recent-earthquakes", methods=["GET"])
 def recent_earthquakes_v2():
-    """Recent earthquakes for mobile clients."""
     try:
         limit = min(max(1, int(request.args.get("limit", 80) or 80)), 200)
         cache_key = f"recent-earthquakes:{limit}"
         cached = _cache_get(cache_key, _RECENT_TTL_SEC)
         if cached is not None:
-            return jsonify(cached)
+            return success_response(cached, message="Recent earthquakes cache")
+
         events = load_events()
         sorted_events = sorted(events, key=lambda event: -event["timestamp"])
+        record_earthquake_events(sorted_events[:limit], source="recent_earthquakes")
         out = []
         for event in sorted_events[:limit]:
             event_key = (
@@ -241,8 +351,14 @@ def recent_earthquakes_v2():
                     "event_key": event_key,
                 }
             )
+
         payload = {"status": "success", "events": out}
         _cache_set(cache_key, payload)
-        return jsonify(payload)
+        return success_response(payload)
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc), "events": []}), 500
+        return error_response(
+            str(exc),
+            code="RECENT_EARTHQUAKES_FAILED",
+            http_status=500,
+            payload={"events": []},
+        )

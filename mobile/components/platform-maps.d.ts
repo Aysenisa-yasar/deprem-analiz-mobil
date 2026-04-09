@@ -9,6 +9,7 @@ declare module '@/components/RiskMap' {
     scheme: 'light' | 'dark';
     t: ThemeTokens;
     userLocation?: { lat: number; lon: number } | null;
+    focusPoint?: { lat: number; lon: number } | null;
   }>;
 }
 
