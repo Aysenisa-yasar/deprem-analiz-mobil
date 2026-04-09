@@ -74,7 +74,7 @@ export default function EmergencyScreen() {
 
   const sendStatus = async (item: (typeof STATUS_ITEMS)[number]) => {
     if (!token || !user || !emergencyContact) {
-      setMessage('Bu özellik için giriş yapıp kayıtlı bir acil kişi tanımlaman gerekiyor.');
+      setMessage('Bu ozellik icin giris yapip kayitli bir acil kisi tanimlaman gerekiyor.');
       router.push('/settings');
       return;
     }
@@ -82,7 +82,7 @@ export default function EmergencyScreen() {
     setBusyKey(item.key);
     setMessage(null);
 
-    let locationLine = 'Konum paylaşılamadı.';
+    let locationLine = 'Konum paylasilamadi.';
     const location = await getSafeDeviceLocation({ requestPermission: true, allowLastKnown: true });
     if (location.ok) {
       locationLine = `Konum: ${location.lat.toFixed(5)}, ${location.lon.toFixed(5)}`;
@@ -93,7 +93,7 @@ export default function EmergencyScreen() {
 
     const body = [
       `[ACIL DURUM] ${item.label}`,
-      `Gönderen: @${user.username}`,
+      `Gonderen: @${user.username}`,
       locationLine,
       item.detail,
     ].join('\n');
@@ -110,14 +110,14 @@ export default function EmergencyScreen() {
         });
         const queue = await getOfflineRelayQueue();
         setQueuedCount(queue.length);
-        setMessage('Ağ yok gibi görünüyor. Acil durum mesajı cihazda kuyruğa alındı.');
+        setMessage('Ag yok gibi gorunuyor. Acil durum mesaji cihazda kuyruga alindi.');
         return;
       }
-      setMessage(result.message || 'Durum mesajı gönderilemedi.');
+      setMessage(result.message || 'Durum mesaji gonderilemedi.');
       return;
     }
 
-    setMessage(`Durum mesajı @${emergencyContact} kullanıcısına gönderildi.`);
+    setMessage(`Durum mesaji @${emergencyContact} kullanicisina gonderildi.`);
   };
 
   const flushQueue = async () => {
@@ -128,10 +128,10 @@ export default function EmergencyScreen() {
       const result = await flushOfflineRelayQueue(apiBase, token);
       setQueuedCount(result.remaining);
       if (result.remaining > 0) {
-        setMessage(`Kuyruktaki ${result.remaining} mesaj hâlâ gönderilemedi.`);
+        setMessage(`Kuyruktaki ${result.remaining} mesaj hala gonderilemedi.`);
         return;
       }
-      setMessage(result.sent > 0 ? 'Kuyruktaki acil mesajlar gönderildi.' : 'Kuyruk boş.');
+      setMessage(result.sent > 0 ? 'Kuyruktaki acil mesajlar gonderildi.' : 'Kuyruk bos.');
     } finally {
       setQueueBusy(false);
     }
@@ -174,15 +174,24 @@ export default function EmergencyScreen() {
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
-              <Text style={[styles.infoTitle, { color: t.text }]}>İleti Katı</Text>
-              <View style={[styles.switchPill, { backgroundColor: alpha(t.success, 0.16), borderColor: alpha(t.success, 0.28) }]}>
+              <Text style={[styles.infoTitle, { color: t.text }]}>Ileti Kati</Text>
+              <View
+                style={[
+                  styles.switchPill,
+                  {
+                    backgroundColor: alpha(t.success, 0.16),
+                    borderColor: alpha(t.success, 0.28),
+                  },
+                ]}>
                 <View style={[styles.switchDot, { backgroundColor: t.success }]} />
               </View>
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
-              <Text style={[styles.infoTitle, { color: t.text }]}>Taşıyıcı</Text>
-              <Text style={[styles.infoValue, { color: t.textSecondary }]}>{ACTIVE_TRANSPORT.title}</Text>
+              <Text style={[styles.infoTitle, { color: t.text }]}>Tasiyici</Text>
+              <Text style={[styles.infoValue, { color: t.textSecondary }]}>
+                {ACTIVE_TRANSPORT.title}
+              </Text>
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
@@ -192,30 +201,53 @@ export default function EmergencyScreen() {
 
             <View style={styles.infoRow}>
               <Text style={[styles.infoTitle, { color: t.text }]}>Peer-to-peer</Text>
-              <Text style={[styles.infoValue, { color: t.textSecondary }]}>{ACTIVE_TRANSPORT.peerToPeerLabel}</Text>
+              <Text style={[styles.infoValue, { color: t.textSecondary }]}>
+                {ACTIVE_TRANSPORT.peerToPeerLabel}
+              </Text>
             </View>
 
             <GlowButton
               t={t}
-              label="Acil Mesaj Gönder"
+              label="Acil Mesaj Gonder"
               onPress={() => router.push('/messages')}
               style={styles.fullButton}
             />
+            <GlowButton
+              t={t}
+              tone="orange"
+              label="Gercek P2P Kanal"
+              onPress={() => router.push('/p2p')}
+              style={styles.fullButton}
+            />
 
-            <View style={[styles.offlineCard, { backgroundColor: alpha(t.danger, 0.10), borderColor: alpha(t.danger, 0.18) }]}>
+            <View
+              style={[
+                styles.offlineCard,
+                {
+                  backgroundColor: alpha(t.danger, 0.1),
+                  borderColor: alpha(t.danger, 0.18),
+                },
+              ]}>
               <View style={styles.offlineHead}>
                 <FontAwesome name="power-off" size={18} color={t.danger} />
-                <Text style={[styles.offlineTitle, { color: t.text }]}>Çevrimdışı Mod</Text>
-                <View style={[styles.offlineSwitch, { backgroundColor: alpha(t.glowBlue, 0.16), borderColor: alpha(t.glowBlue, 0.22) }]}>
+                <Text style={[styles.offlineTitle, { color: t.text }]}>Cevrimdisi Mod</Text>
+                <View
+                  style={[
+                    styles.offlineSwitch,
+                    {
+                      backgroundColor: alpha(t.glowBlue, 0.16),
+                      borderColor: alpha(t.glowBlue, 0.22),
+                    },
+                  ]}>
                   <View style={[styles.switchDot, { backgroundColor: t.glowBlue }]} />
                 </View>
               </View>
               <Text style={[styles.offlineCopy, { color: t.textSecondary }]}>
-                Kuyruktaki mesajlar: {queuedCount}. İnternet geri geldiğinde yeniden gönderilebilir.
+                Kuyruktaki mesajlar: {queuedCount}. Internet geri geldiginde yeniden gonderilebilir.
               </Text>
               <Text style={[styles.offlineCopy, { color: t.textSecondary }]}>
-                {ACTIVE_TRANSPORT.meshDisclaimer} Acil durum mesajları önce sunucuya gönderilir,
-                bağlantı yoksa cihazda kalıcı olarak kuyruklanır.
+                {ACTIVE_TRANSPORT.meshDisclaimer} Acil durum mesajlari once sunucuya gonderilir,
+                baglanti yoksa cihazda kalici olarak kuyruklanir.
               </Text>
             </View>
           </GlassCard>
@@ -238,7 +270,7 @@ export default function EmergencyScreen() {
                   <FontAwesome name={item.icon} size={22} color={active ? t.warn : t.brandTab} />
                   <Text style={[styles.quickTitle, { color: t.text }]}>{item.label}</Text>
                   <Text style={[styles.quickText, { color: t.textSecondary }]}>
-                    {active ? 'Gönderiliyor...' : item.short}
+                    {active ? 'Gonderiliyor...' : item.short}
                   </Text>
                 </Pressable>
               );
@@ -249,7 +281,7 @@ export default function EmergencyScreen() {
             <GlowButton
               t={t}
               tone="orange"
-              label="Kuyruğu Yeniden Dene"
+              label="Kuyrugu Yeniden Dene"
               onPress={() => void flushQueue()}
               disabled={queueBusy || queuedCount === 0}
               style={styles.flexButton}
@@ -270,7 +302,9 @@ export default function EmergencyScreen() {
           ) : null}
 
           <Pressable onPress={() => router.push('/settings')} style={styles.footerLink}>
-            <Text style={[styles.footerLinkText, { color: t.brandTab }]}>Acil kişi ve konum ayarlarını aç</Text>
+            <Text style={[styles.footerLinkText, { color: t.brandTab }]}>
+              Acil kisi ve konum ayarlarini ac
+            </Text>
           </Pressable>
         </ScrollView>
       </SafeAreaView>
@@ -287,30 +321,30 @@ const STATUS_ITEMS: {
 }[] = [
   {
     key: 'safe',
-    label: 'Güvendeyim',
+    label: 'Guvendeyim',
     short: 'Durumum stabil',
-    detail: 'Ben güvendeyim. Ulaşabilirsen bana yaz veya ara.',
+    detail: 'Ben guvendeyim. Ulasabilirsen bana yaz veya ara.',
     icon: 'check-circle',
   },
   {
     key: 'injured',
-    label: 'Yardım Lazım',
-    short: 'Tıbbi destek gerekli',
-    detail: 'Yaralıyım ve yardıma ihtiyacım var.',
+    label: 'Yardim Lazim',
+    short: 'Tibbi destek gerekli',
+    detail: 'Yaraliyim ve yardima ihtiyacim var.',
     icon: 'medkit',
   },
   {
     key: 'trapped_ok',
-    label: 'Enkaz Altındayım',
-    short: 'Bilincim açık',
-    detail: 'Enkaz altındayım. Bilincim açık, yardım bekliyorum.',
+    label: 'Enkaz Altindayim',
+    short: 'Bilincim acik',
+    detail: 'Enkaz altindayim. Bilincim acik, yardim bekliyorum.',
     icon: 'exclamation-circle',
   },
   {
     key: 'family_check',
-    label: 'Yakınımı Kontrol Et',
-    short: 'Durum kontrol mesajı',
-    detail: 'Mümkünse aile bireylerini ve yakınlarımızı kontrol edin.',
+    label: 'Yakinimi Kontrol Et',
+    short: 'Durum kontrol mesaji',
+    detail: 'Mumkunse aile bireylerini ve yakinlarimizi kontrol edin.',
     icon: 'users',
   },
 ];
@@ -327,7 +361,7 @@ function makeStyles(t: ThemeTokens) {
       borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: alpha(t.glowBlue, 0.10),
+      backgroundColor: alpha(t.glowBlue, 0.1),
       borderWidth: 1,
       borderColor: alpha(t.glowBlue, 0.18),
     },

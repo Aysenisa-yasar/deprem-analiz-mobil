@@ -32,11 +32,7 @@ import type { ChatMessage } from '@/services/types';
 const POLL_MS = 50_000;
 const TAB_BAR_CLEARANCE = 58;
 
-const QUICK_ACTIONS = [
-  'Güvendeyim',
-  'Yardım lazım',
-  'Konumumu paylaş',
-];
+const QUICK_ACTIONS = ['Guvendeyim', 'Yardim lazim', 'Konumumu paylas'];
 
 function formatMessageTime(createdAt: number): string {
   return new Date(createdAt * 1000).toLocaleTimeString('tr-TR', {
@@ -129,7 +125,7 @@ export default function MessagesScreen() {
       }
     };
 
-    (async () => {
+    void (async () => {
       setRefreshing(true);
       try {
         const initial = await fetchMessages(apiBase, token, 0);
@@ -161,7 +157,7 @@ export default function MessagesScreen() {
     const recipient = toUser.trim();
     const content = body.trim();
     if (!recipient || !content) {
-      setSendErr('Kullanıcı adı ve mesaj gerekli.');
+      setSendErr('Kullanici adi ve mesaj gerekli.');
       return;
     }
 
@@ -175,10 +171,10 @@ export default function MessagesScreen() {
         });
         const queue = await getOfflineRelayQueue();
         setQueuedCount(queue.length);
-        setSendErr('Ağ yok gibi görünüyor. Mesaj cihazda kuyruklandı.');
+        setSendErr('Ag yok gibi gorunuyor. Mesaj cihazda kuyruklandi.');
         return;
       }
-      setSendErr(result.message || 'Mesaj gönderilemedi.');
+      setSendErr(result.message || 'Mesaj gonderilemedi.');
       return;
     }
 
@@ -199,10 +195,10 @@ export default function MessagesScreen() {
         setList(fresh);
       }
       if (result.remaining > 0) {
-        setSendErr(`Kuyrukta ${result.remaining} mesaj kaldı. Hâlâ ağ veya alıcı sorunu olabilir.`);
+        setSendErr(`Kuyrukta ${result.remaining} mesaj kaldi. Hala ag veya alici sorunu olabilir.`);
         return;
       }
-      setSendErr(result.sent > 0 ? 'Kuyruktaki mesajlar gönderildi.' : 'Kuyruk zaten boş.');
+      setSendErr(result.sent > 0 ? 'Kuyruktaki mesajlar gonderildi.' : 'Kuyruk zaten bos.');
     } finally {
       setQueueBusy(false);
     }
@@ -220,8 +216,8 @@ export default function MessagesScreen() {
   };
 
   const applyQuickAction = (label: string) => {
-    if (label === 'Konumumu paylaş') {
-      setBody('Konumumu paylaşmam gerekiyor. Müsaitsen bana dönüş yap.');
+    if (label === 'Konumumu paylas') {
+      setBody('Konumumu paylasmam gerekiyor. Musaitsen bana donus yap.');
       return;
     }
     setBody(label);
@@ -244,8 +240,8 @@ export default function MessagesScreen() {
             <AvatarOrb t={t} label="MS" size={62} />
             <Text style={[styles.lockTitle, { color: t.text }]}>Acil Mesajlar</Text>
             <Text style={[styles.lockText, { color: t.textSecondary }]}>
-              Hesabınla giriş yaptığında birebir mesajlaşabilir, durum kartlarını kaydedebilir ve
-              kuyruklanan iletileri yönetebilirsin.
+              Hesabinla giris yaptiginda birebir mesajlasabilir, durum kartlarini kaydedebilir ve
+              kuyruklanan iletileri yonetebilirsin.
             </Text>
           </GlassCard>
         </View>
@@ -275,7 +271,7 @@ export default function MessagesScreen() {
           <View style={[styles.searchWrap, { backgroundColor: t.inputBg, borderColor: t.border }]}>
             <FontAwesome name="search" size={16} color={t.textMuted} />
             <TextInput
-              placeholder="Mesajlarda Ara..."
+              placeholder="Mesajlarda ara..."
               placeholderTextColor={t.textMuted}
               value={search}
               onChangeText={setSearch}
@@ -295,11 +291,11 @@ export default function MessagesScreen() {
             </View>
             <View style={styles.statusMetaRow}>
               <Text style={[styles.statusMeta, { color: t.textMuted }]}>
-                Taşıyıcı: {ACTIVE_TRANSPORT.title}. {ACTIVE_TRANSPORT.meshDisclaimer}
+                Tasiyici: {ACTIVE_TRANSPORT.title}. {ACTIVE_TRANSPORT.meshDisclaimer}
               </Text>
               <GlowButton
                 t={t}
-                label={queueBusy ? 'Deneniyor' : 'Tekrar Gönder'}
+                label={queueBusy ? 'Deneniyor' : 'Tekrar Gonder'}
                 onPress={() => void onFlushQueue()}
                 disabled={queueBusy || queuedCount === 0}
                 style={styles.flushButton}
@@ -319,7 +315,7 @@ export default function MessagesScreen() {
           onRefresh={onRefresh}
           ListEmptyComponent={
             <Text style={[styles.emptyText, { color: t.textSecondary }]}>
-              Konuşma akışı burada görünecek.
+              Konusma akisi burada gorunecek.
             </Text>
           }
           renderItem={({ item }) => {
@@ -334,9 +330,12 @@ export default function MessagesScreen() {
                   style={[
                     styles.messageCard,
                     mine
-                      ? { backgroundColor: alpha(t.glowBlue, 0.18), borderColor: alpha(t.glowBlue, 0.28) }
+                      ? {
+                          backgroundColor: alpha(t.glowBlue, 0.18),
+                          borderColor: alpha(t.glowBlue, 0.28),
+                        }
                       : {
-                          backgroundColor: alert ? alpha(t.glowOrange, 0.10) : t.panel,
+                          backgroundColor: alert ? alpha(t.glowOrange, 0.1) : t.panel,
                           borderColor: alert ? alpha(t.glowOrange, 0.24) : t.border,
                         },
                   ]}>
@@ -344,11 +343,16 @@ export default function MessagesScreen() {
                     <Text style={[styles.messageName, { color: mine ? '#eef7ff' : t.text }]}>
                       {mine ? 'Sen' : item.from_user}
                     </Text>
-                    <Text style={[styles.messageTime, { color: mine ? 'rgba(255,255,255,0.72)' : t.textMuted }]}>
+                    <Text
+                      style={[
+                        styles.messageTime,
+                        { color: mine ? 'rgba(255,255,255,0.72)' : t.textMuted },
+                      ]}>
                       {formatMessageTime(item.created_at)}
                     </Text>
                   </View>
-                  <Text style={[styles.messageBody, { color: mine ? '#eef7ff' : t.textSecondary }]}>
+                  <Text
+                    style={[styles.messageBody, { color: mine ? '#eef7ff' : t.textSecondary }]}>
                     {item.body}
                   </Text>
                 </View>
@@ -373,7 +377,13 @@ export default function MessagesScreen() {
               <Pressable
                 key={item}
                 onPress={() => applyQuickAction(item)}
-                style={[styles.quickChip, { backgroundColor: alpha(t.glowBlue, 0.10), borderColor: alpha(t.glowBlue, 0.20) }]}>
+                style={[
+                  styles.quickChip,
+                  {
+                    backgroundColor: alpha(t.glowBlue, 0.1),
+                    borderColor: alpha(t.glowBlue, 0.2),
+                  },
+                ]}>
                 <Text style={[styles.quickChipText, { color: t.text }]}>{item}</Text>
               </Pressable>
             ))}
@@ -382,16 +392,22 @@ export default function MessagesScreen() {
           {user?.emergency_contact ? (
             <Pressable
               onPress={() => setToUser(user.emergency_contact ?? '')}
-              style={[styles.contactChip, { backgroundColor: alpha(t.glowOrange, 0.10), borderColor: alpha(t.glowOrange, 0.22) }]}>
+              style={[
+                styles.contactChip,
+                {
+                  backgroundColor: alpha(t.glowOrange, 0.1),
+                  borderColor: alpha(t.glowOrange, 0.22),
+                },
+              ]}>
               <FontAwesome name="shield" size={12} color={t.warn} />
               <Text style={[styles.contactChipText, { color: t.text }]}>
-                Acil Yardım Grubu: @{user.emergency_contact}
+                Acil Yardim Grubu: @{user.emergency_contact}
               </Text>
             </Pressable>
           ) : null}
 
           <TextInput
-            placeholder="Alıcı kullanıcı adı"
+            placeholder="Alici kullanici adi"
             placeholderTextColor={t.textMuted}
             autoCapitalize="none"
             style={[styles.input, { color: t.text, borderColor: t.border, backgroundColor: t.inputBg }]}
@@ -400,7 +416,7 @@ export default function MessagesScreen() {
           />
           <View style={styles.composeRow}>
             <TextInput
-              placeholder="Mesajınızı yazın..."
+              placeholder="Mesajinizi yazin..."
               placeholderTextColor={t.textMuted}
               style={[
                 styles.input,
@@ -442,7 +458,7 @@ function makeStyles(t: ThemeTokens) {
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: alpha(t.glowBlue, 0.10),
+      backgroundColor: alpha(t.glowBlue, 0.1),
       borderWidth: 1,
       borderColor: alpha(t.glowBlue, 0.18),
     },
@@ -462,7 +478,12 @@ function makeStyles(t: ThemeTokens) {
     statusHead: { gap: 6 },
     statusTitle: { fontSize: 18, fontWeight: '800' },
     statusBody: { fontSize: 13, lineHeight: 19 },
-    statusMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+    statusMetaRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+    },
     statusMeta: { fontSize: 12, fontWeight: '700', flex: 1 },
     flushButton: { minWidth: 132 },
     list: { flex: 1 },
@@ -478,7 +499,12 @@ function makeStyles(t: ThemeTokens) {
       paddingVertical: 12,
       gap: 8,
     },
-    messageMetaRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, alignItems: 'center' },
+    messageMetaRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10,
+      alignItems: 'center',
+    },
     messageName: { fontSize: 14, fontWeight: '800' },
     messageTime: { fontSize: 12, fontWeight: '600' },
     messageBody: { fontSize: 15, lineHeight: 22 },

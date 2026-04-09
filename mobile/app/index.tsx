@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SeismicPulseMark } from '@/components/brand';
 import { CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, alpha } from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
 import { theme, type ThemeTokens } from '@/constants/theme';
@@ -166,12 +167,41 @@ export default function WelcomeScreen() {
         <SafeAreaView style={styles.safe}>
           <ScrollView contentContainerStyle={styles.scrollPad} showsVerticalScrollIndicator={false}>
             <View style={styles.heroWrap}>
-              <CosmicLabel t={t}>risk intelligence</CosmicLabel>
+              <SeismicPulseMark t={t} size={122} showWordmark />
+              <CosmicLabel t={t}>canli deprem merkezi</CosmicLabel>
               <Text style={[styles.heroTitle, { color: t.text }]}>Deprem Risk Izleyici</Text>
               <Text style={[styles.heroSub, { color: t.textSecondary }]}>
-                Deprem risklerini takip edin, acil uyarilari gorun ve kritik anlarda
-                yakinlariniza hizla ulasin.
+                Guncel risk kartlari, Kandilli destekli deprem akisi, acil mesajlasma ve
+                Nearby tabanli gercek cihaz P2P tek uygulamada.
               </Text>
+              <View style={styles.heroChips}>
+                <View
+                  style={[
+                    styles.heroChip,
+                    {
+                      backgroundColor: alpha(t.glowBlue, 0.12),
+                      borderColor: alpha(t.glowBlue, 0.22),
+                    },
+                  ]}>
+                  <Text style={[styles.heroChipTitle, { color: t.text }]}>Risk Haritasi</Text>
+                  <Text style={[styles.heroChipBody, { color: t.textSecondary }]}>
+                    Canli il bazli tahmin ve isi katmani
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.heroChip,
+                    {
+                      backgroundColor: alpha(t.glowOrange, 0.1),
+                      borderColor: alpha(t.glowOrange, 0.18),
+                    },
+                  ]}>
+                  <Text style={[styles.heroChipTitle, { color: t.text }]}>Gercek P2P</Text>
+                  <Text style={[styles.heroChipBody, { color: t.textSecondary }]}>
+                    Internet olmadan yakin cihaz kanali
+                  </Text>
+                </View>
+              </View>
             </View>
 
             <GlassCard t={t} tone="cool" style={styles.formCard}>
@@ -350,14 +380,25 @@ function makeStyles(t: ThemeTokens) {
       gap: 24,
     },
     heroWrap: {
-      minHeight: 260,
+      minHeight: 320,
       justifyContent: 'center',
       alignItems: 'center',
-      gap: 12,
-      paddingTop: 40,
+      gap: 14,
+      paddingTop: 28,
     },
     heroTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.9, fontFamily: t.displayFont },
-    heroSub: { fontSize: 15, lineHeight: 24, textAlign: 'center', maxWidth: 310 },
+    heroSub: { fontSize: 15, lineHeight: 24, textAlign: 'center', maxWidth: 320 },
+    heroChips: { flexDirection: 'row', gap: 10, width: '100%' },
+    heroChip: {
+      flex: 1,
+      borderWidth: 1,
+      borderRadius: 18,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 5,
+    },
+    heroChipTitle: { fontSize: 13, fontWeight: '800', fontFamily: t.displayFont },
+    heroChipBody: { fontSize: 12, lineHeight: 17 },
     formCard: { gap: 14, padding: 18 },
     modeRow: {
       flexDirection: 'row',

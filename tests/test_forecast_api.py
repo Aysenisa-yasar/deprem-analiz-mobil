@@ -53,6 +53,20 @@ def test_forecast_location_v2_requires_coordinates(client):
     assert r.status_code == 400
 
 
+def test_recent_earthquakes_v2_returns_events(client):
+    r = client.get("/api/v2/recent-earthquakes?limit=5")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data is not None
+    assert data["success"] is True
+    assert "events" in data
+    assert len(data["events"]) <= 5
+    if data["events"]:
+        event = data["events"][0]
+        assert "event_key" in event
+        assert "timestamp" in event
+
+
 def test_forecast_map_v2_falls_back_for_incompatible_runtime_model(client, monkeypatch):
     import routes.forecast_routes as forecast_routes
 

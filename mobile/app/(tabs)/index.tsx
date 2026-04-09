@@ -13,7 +13,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AvatarOrb, CosmicBackdrop, CosmicLabel, GlassCard, GlowButton, MiniBars, alpha } from '@/components/cosmic';
+import { SeismicPulseMark } from '@/components/brand';
+import {
+  AvatarOrb,
+  CosmicBackdrop,
+  CosmicLabel,
+  GlassCard,
+  GlowButton,
+  MiniBars,
+  alpha,
+} from '@/components/cosmic';
 import { useColorScheme } from '@/components/useColorScheme';
 import { theme, riskAccent, type ThemeTokens } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -53,18 +62,28 @@ function insightLines(point: ForecastPoint | null, nearbyCount: number): string[
   if (point?.alert_advisory?.reasons?.length) {
     return point.alert_advisory.reasons.slice(0, 3);
   }
+
   const lines = [
     nearbyCount > 0
-      ? `Son 24 saatte yakın bölgede ${nearbyCount} sismik olay öne çıktı.`
-      : 'Son 24 saat içinde ciddi yoğunluk görünmüyor.',
+      ? `Son 24 saatte yakin bolgede ${nearbyCount} sismik olay one cikti.`
+      : 'Son 24 saat icinde ciddi yogunluk gorunmuyor.',
   ];
+
   if (point?.signal_event_count != null) {
-    lines.push(`Sinyal event sayısı ${point.signal_event_count} ile dikkat çekiyor.`);
+    lines.push(`Sinyal event sayisi ${point.signal_event_count} ile dikkat cekiyor.`);
   }
   if (point?.fault_distance != null) {
-    lines.push(`Fay hattına tahmini uzaklık ${point.fault_distance.toFixed(0)} km.`);
+    lines.push(`Fay hattina tahmini uzaklik ${point.fault_distance.toFixed(0)} km.`);
   }
+
   return lines;
+}
+
+function quakeSourceLabel(event: QuakeEvent | null): string {
+  if (!event?.source) return 'Sunucu senkronu';
+  if (event.source === 'kandilli_live') return 'Kandilli canli besleme';
+  if (event.source === 'usgs_direct') return 'USGS yedek besleme';
+  return event.source;
 }
 
 export default function HomeScreen() {
@@ -83,6 +102,7 @@ export default function HomeScreen() {
     if (!ready) return;
     setLoading(true);
     setError(null);
+
     try {
       const [quakeResult, forecastResult] = await Promise.all([
         fetchRecentQuakes(apiBase, 60),
@@ -90,13 +110,14 @@ export default function HomeScreen() {
       ]);
       setQuakes(quakeResult);
       setForecast(forecastResult);
+
       if (!quakeResult.length && !forecastResult.length) {
-        setError('Canlı veri alınamadı. API adresini ve backend durumunu kontrol et.');
+        setError('Canli veri alinamadi. API adresini ve backend durumunu kontrol et.');
       }
     } catch {
       setQuakes([]);
       setForecast([]);
-      setError('Veri akışı şu an alınamadı. Yenileyip tekrar deneyebilirsin.');
+      setError('Veri akisi su an alinamadi. Yenileyip tekrar deneyebilirsin.');
     } finally {
       setLoading(false);
     }
@@ -126,8 +147,9 @@ export default function HomeScreen() {
 
   const trendLabel =
     focusPoint?.alert_advisory?.label ||
-    (normalizedRisk >= 0.72 ? 'Yükseliyor' : normalizedRisk >= 0.46 ? 'İzleniyor' : 'Sakin');
-  const trendIcon = normalizedRisk >= 0.72 ? 'arrow-up' : normalizedRisk >= 0.46 ? 'signal' : 'check';
+    (normalizedRisk >= 0.72 ? 'Yukseliyor' : normalizedRisk >= 0.46 ? 'Izleniyor' : 'Sakin');
+  const trendIcon =
+    normalizedRisk >= 0.72 ? 'arrow-up' : normalizedRisk >= 0.46 ? 'signal' : 'check';
   const insight = insightLines(focusPoint, nearbyCount);
 
   if (!ready) {
@@ -154,17 +176,16 @@ export default function HomeScreen() {
             />
           }>
           <View style={styles.topRow}>
-            <View style={styles.topLeft}>
-              <Pressable
-                onPress={() => router.push('/(tabs)/forecast')}
-                style={[styles.topChip, { backgroundColor: alpha(t.glowBlue, 0.14), borderColor: alpha(t.glowBlue, 0.24) }]}>
-                <FontAwesome name="th-large" size={15} color={t.brandTab} />
-              </Pressable>
-              <View style={[styles.topChip, { backgroundColor: alpha(t.glowBlue, 0.08), borderColor: alpha(t.glowBlue, 0.18), flexDirection: 'row', gap: 8 }]}>
-                <View style={[styles.dot, { backgroundColor: t.glowBlue }]} />
-                <View style={[styles.dot, { backgroundColor: alpha(t.textMuted, 0.6) }]} />
+            <View style={styles.brandLockup}>
+              <SeismicPulseMark t={t} size={48} />
+              <View style={styles.brandCopy}>
+                <Text style={[styles.brandTitle, { color: t.text }]}>DepremAnaliz Live</Text>
+                <Text style={[styles.brandSub, { color: t.textSecondary }]}>
+                  Risk, mesaj ve P2P ayni akista
+                </Text>
               </View>
             </View>
+
             <AvatarOrb
               t={t}
               size={42}
@@ -174,10 +195,10 @@ export default function HomeScreen() {
 
           <GlassCard t={t} tone="warm" style={styles.heroCard}>
             <CosmicLabel t={t} accent={focusAccent}>
-              canlı risk paneli
+              canli risk paneli
             </CosmicLabel>
             <Text style={[styles.heroTitle, { color: t.text }]}>
-              {focusPoint?.city || 'İstanbul'} Risk Durumu
+              {focusPoint?.city || 'Istanbul'} Risk Durumu
             </Text>
 
             <View style={styles.metricRow}>
@@ -199,9 +220,10 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.metricRow}>
-              <Text style={[styles.metricLabel, { color: t.textSecondary }]}>Güven</Text>
+              <Text style={[styles.metricLabel, { color: t.textSecondary }]}>Guven</Text>
               <Text style={[styles.metricSubValue, { color: t.mid }]}>
-                %{confidencePct} {confidencePct >= 70 ? 'Güçlü' : confidencePct >= 45 ? 'Orta' : 'Temkinli'}
+                %{confidencePct}{' '}
+                {confidencePct >= 70 ? 'Guclu' : confidencePct >= 45 ? 'Orta' : 'Temkinli'}
               </Text>
             </View>
 
@@ -214,7 +236,7 @@ export default function HomeScreen() {
             />
 
             <GlassCard t={t} tone="cool" style={styles.innerCard}>
-              <Text style={[styles.innerTitle, { color: t.text }]}>Model Diyor Ki:</Text>
+              <Text style={[styles.innerTitle, { color: t.text }]}>Model Ozeti</Text>
               {insight.map((line) => (
                 <Text key={line} style={[styles.innerCopy, { color: t.textSecondary }]}>
                   {line}
@@ -242,17 +264,17 @@ export default function HomeScreen() {
             />
             <Text style={[styles.quakeMeta, { color: t.textSecondary }]}>
               {lastQuake
-                ? `${lastQuake.depth.toFixed(0)} km derinlik • ${relativeTimeTr(lastQuake.timestamp)}`
-                : 'Henüz son deprem verisi alınamadı.'}
+                ? `${quakeSourceLabel(lastQuake)} - ${lastQuake.depth.toFixed(0)} km derinlik - ${relativeTimeTr(lastQuake.timestamp)}`
+                : 'Henuz son deprem verisi alinamadi.'}
             </Text>
             <View style={styles.detailRow}>
-              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Yakın Fay Mesafesi</Text>
+              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Yakin Fay Mesafesi</Text>
               <Text style={[styles.detailValue, { color: t.warn }]}>
                 {focusPoint?.fault_distance != null ? `${focusPoint.fault_distance.toFixed(0)} km` : '--'}
               </Text>
             </View>
             <View style={styles.detailRow}>
-              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Son Güncelleme</Text>
+              <Text style={[styles.detailLabel, { color: t.textSecondary }]}>Son Guncelleme</Text>
               <Text style={[styles.detailCaption, { color: t.textMuted }]}>
                 {lastQuake ? formatQuakeDateTime(lastQuake.timestamp) : 'Bekleniyor'}
               </Text>
@@ -280,22 +302,22 @@ export default function HomeScreen() {
           <GlassCard t={t} tone="cool" style={styles.feedCard}>
             <View style={styles.feedHead}>
               <View>
-                <Text style={[styles.cardTitle, { color: t.text }]}>Canlı Akış</Text>
+                <Text style={[styles.cardTitle, { color: t.text }]}>Canli Akis</Text>
                 <Text style={[styles.feedSub, { color: t.textSecondary }]}>
-                  Son 24 saatte öne çıkan sismik hareketler
+                  Son 24 saatte one cikan sismik hareketler
                 </Text>
               </View>
-              <CosmicLabel t={t}>{nearbyCount} yakın sinyal</CosmicLabel>
+              <CosmicLabel t={t}>{nearbyCount} yakin sinyal</CosmicLabel>
             </View>
 
             {(quakes.slice(0, 3).length ? quakes.slice(0, 3) : FALLBACK_ITEMS).map((item, index) => {
               const isFallback = 'title' in item;
               const title = isFallback
                 ? item.title
-                : `M${item.mag.toFixed(1)} • ${item.depth.toFixed(0)} km derinlik`;
+                : `M${item.mag.toFixed(1)} - ${item.depth.toFixed(0)} km derinlik`;
               const subtitle = isFallback
                 ? item.subtitle
-                : `${relativeTimeTr(item.timestamp)} • ${item.lat.toFixed(2)}, ${item.lon.toFixed(2)}`;
+                : `${quakeSourceLabel(item)} - ${relativeTimeTr(item.timestamp)} - ${item.lat.toFixed(2)}, ${item.lon.toFixed(2)}`;
               const accent = isFallback
                 ? index === 0
                   ? t.glowOrange
@@ -314,9 +336,7 @@ export default function HomeScreen() {
             })}
           </GlassCard>
 
-          {error ? (
-            <Text style={[styles.errorText, { color: t.danger }]}>{error}</Text>
-          ) : null}
+          {error ? <Text style={[styles.errorText, { color: t.danger }]}>{error}</Text> : null}
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -324,8 +344,8 @@ export default function HomeScreen() {
 }
 
 const FALLBACK_ITEMS = [
-  { title: 'Risk verisi yükleniyor', subtitle: 'Sunucudan yeni tahminler bekleniyor.' },
-  { title: 'Aktivite penceresi hazırlanıyor', subtitle: 'İlk veri geldikçe kartlar canlı dolacak.' },
+  { title: 'Risk verisi yukleniyor', subtitle: 'Sunucudan yeni tahminler bekleniyor.' },
+  { title: 'Aktivite penceresi hazirlaniyor', subtitle: 'Ilk veri geldikce kartlar canli dolacak.' },
 ];
 
 function makeStyles(t: ThemeTokens) {
@@ -335,17 +355,10 @@ function makeStyles(t: ThemeTokens) {
     loadingRoot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     scrollPad: { padding: 18, paddingBottom: 118, gap: 16 },
     topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    topLeft: { flexDirection: 'row', gap: 10 },
-    topChip: {
-      minHeight: 38,
-      minWidth: 56,
-      borderRadius: 14,
-      borderWidth: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 12,
-    },
-    dot: { width: 8, height: 8, borderRadius: 999 },
+    brandLockup: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    brandCopy: { gap: 2 },
+    brandTitle: { fontSize: 16, fontWeight: '800', fontFamily: t.displayFont },
+    brandSub: { fontSize: 12, lineHeight: 17 },
     heroCard: { padding: 18, gap: 12 },
     heroTitle: { fontSize: 32, fontWeight: '800', lineHeight: 38, fontFamily: t.displayFont },
     metricRow: {
@@ -370,7 +383,7 @@ function makeStyles(t: ThemeTokens) {
     cardTitle: { fontSize: 18, fontWeight: '800' },
     quakeMag: { fontSize: 19, fontWeight: '800', fontFamily: t.displayFont },
     quakeTrend: { marginTop: 2 },
-    quakeMeta: { fontSize: 18, lineHeight: 24 },
+    quakeMeta: { fontSize: 16, lineHeight: 23 },
     detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     detailLabel: { fontSize: 15, fontWeight: '600' },
     detailValue: { fontSize: 16, fontWeight: '800' },

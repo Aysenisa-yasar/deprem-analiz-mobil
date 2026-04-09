@@ -24,6 +24,10 @@ export const unstable_settings = {
   initialRouteName: 'index',
 };
 
+void SplashScreen.preventAutoHideAsync().catch(() => {
+  /* keep startup resilient */
+});
+
 function installFetchGuard() {
   if (globalThis.__DA_FETCH_GUARD_INSTALLED__ || typeof globalThis.fetch !== 'function') {
     return;
@@ -119,6 +123,7 @@ function RootLayoutNav() {
           <Stack>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="p2p" options={{ title: 'P2P Kanal' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
           </Stack>
         </ThemeProvider>

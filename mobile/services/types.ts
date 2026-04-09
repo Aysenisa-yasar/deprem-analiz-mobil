@@ -104,6 +104,8 @@ export type QuakeEvent = {
   depth: number;
   timestamp: number;
   event_key: string;
+  source?: string;
+  place?: string;
 };
 
 export type ChatMessage = {
