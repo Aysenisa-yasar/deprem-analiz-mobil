@@ -51,7 +51,7 @@
       ]
     ],
     "extra": {
-      "apiUrl": "https://deprem-analiz-mobil.onrender.com",
+      "apiUrl": "https://depremanaliz.onrender.com",
       "router": {},
       "eas": {
         "projectId": "535817ae-9f67-4aa9-b299-2bafee59057d"

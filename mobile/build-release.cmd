@@ -14,6 +14,7 @@ set GRADLE_USER_HOME=%CACHE_DIR%
 set TEMP=%TEMP_DIR%
 set TMP=%TEMP_DIR%
 set NODE_ENV=development
+set EXPO_PUBLIC_API_URL=https://depremanaliz.onrender.com
 
 set SDK_ROOT=%ANDROID_HOME%
 if "%SDK_ROOT%"=="" set SDK_ROOT=%ANDROID_SDK_ROOT%
