@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 
-import { DEFAULT_API_URL } from '@/lib/config';
+import { DEFAULT_API_URL, STARTUP_API_CANDIDATES } from '@/lib/config';
 import { probeApiHealth } from '@/services/apiClient';
 import { fetchMe, loginRequest, logoutRequest } from '@/services/authService';
 import {
@@ -77,26 +77,61 @@ function shouldPreferDefaultApiBase(storedUrl?: string | null, defaultUrl?: stri
   }
 }
 
+function dedupeBases(list: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of list) {
+    const value = normalizeBaseUrl(raw);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+
+  return out;
+}
+
 async function resolveStartupApiBase(storedUrl?: string | null, defaultUrl?: string | null) {
   const stored = normalizeBaseUrl(storedUrl);
   const fallback = normalizeBaseUrl(defaultUrl);
+  const candidates = dedupeBases([
+    ...(stored ? [stored] : []),
+    ...(fallback ? [fallback] : []),
+    ...STARTUP_API_CANDIDATES,
+  ]);
 
-  if (!stored) return fallback ?? DEFAULT_API_URL;
-  if (!fallback || stored === fallback) return stored;
+  if (!candidates.length) return DEFAULT_API_URL;
+  if (candidates.length === 1) return candidates[0];
+
+  if (!stored) {
+    for (const candidate of candidates) {
+      if (await probeApiHealth(candidate, __DEV__ ? 2200 : 3200)) {
+        return candidate;
+      }
+    }
+    return candidates[0];
+  }
 
   const preferFallback = shouldPreferDefaultApiBase(stored, fallback);
-  const first = preferFallback ? fallback : stored;
-  const second = preferFallback ? stored : fallback;
+  const ordered = preferFallback
+    ? dedupeBases([fallback, stored, ...STARTUP_API_CANDIDATES])
+    : candidates;
 
-  if (await probeApiHealth(first, __DEV__ ? 2200 : 3200)) {
-    return first;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const candidate = ordered[index];
+    const timeoutMs = __DEV__
+      ? index === 0
+        ? 2200
+        : 2600
+      : index === 0
+        ? 3200
+        : 3600;
+    if (await probeApiHealth(candidate, timeoutMs)) {
+      return candidate;
+    }
   }
 
-  if (await probeApiHealth(second, __DEV__ ? 2600 : 3600)) {
-    return second;
-  }
-
-  return preferFallback ? fallback : stored;
+  return ordered[0];
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

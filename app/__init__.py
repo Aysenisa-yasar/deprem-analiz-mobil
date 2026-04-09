@@ -4,4 +4,7 @@ def create_app(*args, **kwargs):
     return _create_app(*args, **kwargs)
 
 
-__all__ = ["create_app"]
+app = create_app()
+
+
+__all__ = ["app", "create_app"]

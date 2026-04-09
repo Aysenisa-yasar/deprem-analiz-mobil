@@ -16,6 +16,7 @@ import {
   getOfflineRelayQueue,
   queueOfflineRelayPacket,
 } from '@/lib/offlineRelay';
+import { ACTIVE_TRANSPORT } from '@/lib/transport';
 import { sendMessage } from '@/services/messageService';
 
 export default function EmergencyScreen() {
@@ -145,7 +146,7 @@ export default function EmergencyScreen() {
             <Pressable onPress={() => router.push('/(tabs)')} style={styles.headerIcon}>
               <FontAwesome name="arrow-left" size={16} color={t.brandTab} />
             </Pressable>
-            <Text style={[styles.headerTitle, { color: t.text }]}>Acil Durum Ağı</Text>
+            <Text style={[styles.headerTitle, { color: t.text }]}>Acil Durum Senkronu</Text>
             <View style={styles.headerLightRow}>
               <View style={[styles.headerLight, { backgroundColor: alpha(t.glowBlue, 0.42) }]} />
               <View style={[styles.headerLight, { backgroundColor: alpha(t.glowBlue, 0.14) }]} />
@@ -173,17 +174,15 @@ export default function EmergencyScreen() {
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
-              <Text style={[styles.infoTitle, { color: t.text }]}>Acil Durum Ağı</Text>
+              <Text style={[styles.infoTitle, { color: t.text }]}>İleti Katı</Text>
               <View style={[styles.switchPill, { backgroundColor: alpha(t.success, 0.16), borderColor: alpha(t.success, 0.28) }]}>
                 <View style={[styles.switchDot, { backgroundColor: t.success }]} />
               </View>
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
-              <Text style={[styles.infoTitle, { color: t.text }]}>Teslimat</Text>
-              <Text style={[styles.infoValue, { color: t.textSecondary }]}>
-                Çevrimdışı kuyruk + internet senkronu
-              </Text>
+              <Text style={[styles.infoTitle, { color: t.text }]}>Taşıyıcı</Text>
+              <Text style={[styles.infoValue, { color: t.textSecondary }]}>{ACTIVE_TRANSPORT.title}</Text>
             </View>
 
             <View style={[styles.infoRow, { borderColor: alpha(t.border, 0.6) }]}>
@@ -192,8 +191,8 @@ export default function EmergencyScreen() {
             </View>
 
             <View style={styles.infoRow}>
-              <Text style={[styles.infoTitle, { color: t.text }]}>İletişim</Text>
-              <Text style={[styles.infoValue, { color: t.textSecondary }]}>Kayıtlı kişi + kuyruk</Text>
+              <Text style={[styles.infoTitle, { color: t.text }]}>Peer-to-peer</Text>
+              <Text style={[styles.infoValue, { color: t.textSecondary }]}>{ACTIVE_TRANSPORT.peerToPeerLabel}</Text>
             </View>
 
             <GlowButton
@@ -215,7 +214,8 @@ export default function EmergencyScreen() {
                 Kuyruktaki mesajlar: {queuedCount}. İnternet geri geldiğinde yeniden gönderilebilir.
               </Text>
               <Text style={[styles.offlineCopy, { color: t.textSecondary }]}>
-                Acil durum mesajları önce sunucuya gönderilir, bağlantı yoksa cihazda kalıcı olarak kuyruklanır.
+                {ACTIVE_TRANSPORT.meshDisclaimer} Acil durum mesajları önce sunucuya gönderilir,
+                bağlantı yoksa cihazda kalıcı olarak kuyruklanır.
               </Text>
             </View>
           </GlassCard>

@@ -25,6 +25,7 @@ import {
   getOfflineRelayQueue,
   queueOfflineRelayPacket,
 } from '@/lib/offlineRelay';
+import { ACTIVE_TRANSPORT } from '@/lib/transport';
 import { fetchMessages, sendMessage } from '@/services/messageService';
 import type { ChatMessage } from '@/services/types';
 
@@ -285,16 +286,16 @@ export default function MessagesScreen() {
           <GlassCard t={t} tone="cool" style={styles.statusCard}>
             <View style={styles.statusHead}>
               <View>
-                <Text style={[styles.statusTitle, { color: t.text }]}>Offline Akış</Text>
+                <Text style={[styles.statusTitle, { color: t.text }]}>Offline Senkron</Text>
                 <Text style={[styles.statusBody, { color: t.textSecondary }]}>
-                  İnternet kesilirse mesajlar cihazda saklanır, ağ gelince yeniden gönderilir.
+                  {ACTIVE_TRANSPORT.summary}
                 </Text>
               </View>
               <CosmicLabel t={t}>{queuedCount} kuyruk</CosmicLabel>
             </View>
             <View style={styles.statusMetaRow}>
               <Text style={[styles.statusMeta, { color: t.textMuted }]}>
-                Teslimat: internet varsa anlık, yoksa kalıcı kuyruk
+                Taşıyıcı: {ACTIVE_TRANSPORT.title}. {ACTIVE_TRANSPORT.meshDisclaimer}
               </Text>
               <GlowButton
                 t={t}

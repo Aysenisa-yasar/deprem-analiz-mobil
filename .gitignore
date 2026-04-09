@@ -53,10 +53,12 @@ Thumbs.db
 
 # Logs
 *.log
+*.err
 
 # Temporary files
 *.tmp
 *.temp
+.expo/
 
 
 # Deploy assets kept in repo
